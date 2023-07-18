@@ -55,7 +55,7 @@ COPY . .
 RUN ls -a *cabal*
 RUN cabal update \
     && cabal configure --with-compiler=ghc-8.10.7 \
-    && ls -ltra
+    && ls -ltra \
     && echo "package cardano-crypto-praos" >>  cabal.project.local \
     && echo "flags: -external-libsodium-vrf" >>  cabal.project.local
 RUN cabal build all \
