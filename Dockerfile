@@ -51,6 +51,7 @@ ENV LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH" \
 ARG VERSION
 RUN echo "Building tags/$VERSION..."
 RUN touch cabal.project.local
+RUN ls -a *cabal*
 RUN cabal update \
     && cabal configure --with-compiler=ghc-8.10.7 \
     && echo "package cardano-crypto-praos" >>  cabal.project.local \
