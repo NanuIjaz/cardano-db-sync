@@ -51,38 +51,22 @@ ENV LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH" \
 ARG VERSION
 RUN echo "Building tags/$VERSION..." 
 RUN ls /home
-RUN echo tags/$VERSION > CARDANO_BRANCH \
-    && git clone https://github.com/input-output-hk/cardano-db-sync.git \
-    && cd cardano-db-sync \
-    && git fetch --all --recurse-submodules --tags \
-    && git tag \
-    && git checkout tags/$VERSION 
-RUN cd cardano-db-sync && cabal update \
+RUN copy . . 
+RUN cabal update \
     && cabal configure --with-compiler=ghc-8.10.7 \
     && echo "package cardano-crypto-praos" >>  cabal.project.local \
     && echo "flags: -external-libsodium-vrf" >>  cabal.project.local
-RUN cd cardano-db-sync \
-    && cabal build all \
+RUN cabal build all \
     && cp -p dist-newstyle/build/x86_64-linux/ghc-8.10.7/cardano-db-sync-*/build/cardano-db-sync/cardano-db-sync /root/.local/bin/
 FROM debian:stable-slim
 COPY --from=build /root/.local/bin/ /bin/
 COPY --from=build /usr/local/lib/ /lib/
 RUN apt-get update && apt-get install git postgresql libpq-dev libghc-postgresql-libpq-dev -y
-ARG VERSION
 RUN mkdir /home/cardano
 RUN cd /home/cardano  \
-    && git clone https://github.com/input-output-hk/cardano-db-sync.git \
-    && cd cardano-db-sync \
-    && git fetch --all --recurse-submodules --tags \
-    && git tag \
-    && git checkout tags/$VERSION
-ARG NODE_VERSION
+    && git clone https://github.com/input-output-hk/cardano-db-sync.git 
 RUN cd /home/cardano  \
-    && git clone https://github.com/input-output-hk/cardano-node.git \
-    && cd cardano-node \
-    && git fetch --all --recurse-submodules --tags \
-    && git tag \
-    && git checkout tags/$NODE_VERSION
+    && git clone https://github.com/input-output-hk/cardano-node.git 
 RUN apt-get install -y automake build-essential pkg-config libffi-dev libgmp-dev libssl-dev libtinfo-dev libsystemd-dev zlib1g-dev make g++ tmux git jq wget libncursesw5 libtool autoconf libsqlite3-dev m4 ca-certificates gcc libc6-dev
 RUN cd /home/cardano && mkdir secp256k1-sources && cd secp256k1-sources && git clone https://github.com/bitcoin-core/secp256k1.git && cd secp256k1 && git reset --hard ac83be33d0956faf6b7f61a60ab524ef7d6a473a && ./autogen.sh && ./configure --prefix=/usr --enable-module-schnorrsig --enable-experimental && make && make check && make install
 RUN apt-get -y install libsodium23 libsodium-dev
