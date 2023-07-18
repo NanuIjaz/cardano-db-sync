@@ -50,10 +50,11 @@ ENV LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH" \
     PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
 ARG VERSION
 RUN echo "Building tags/$VERSION..."
+RUN touch cabal.project.local
 RUN cabal update \
     && cabal configure --with-compiler=ghc-8.10.7 \
-    && echo "package cardano-crypto-praos" >>  /cabal.project.local \
-    && echo "flags: -external-libsodium-vrf" >>  /cabal.project.local
+    && echo "package cardano-crypto-praos" >>  cabal.project.local \
+    && echo "flags: -external-libsodium-vrf" >>  cabal.project.local
 RUN cabal build all \
     && cp -p dist-newstyle/build/x86_64-linux/ghc-8.10.7/cardano-db-sync-*/build/cardano-db-sync/cardano-db-sync /root/.local/bin/
 FROM debian:stable-slim
