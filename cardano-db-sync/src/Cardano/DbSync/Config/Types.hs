@@ -47,6 +47,7 @@ newtype LogFileDir = LogFileDir
 newtype ConfigFile = ConfigFile
   { unConfigFile :: FilePath
   }
+  deriving (Show)
 
 data SyncCommand
   = CmdRun !SyncNodeParams
@@ -77,6 +78,7 @@ data SyncNodeParams = SyncNodeParams
   , enpSnEveryLagging :: !Word64
   , enpMaybeRollback :: !(Maybe SlotNo)
   }
+  deriving (Show)
 
 -- May have other constructors when we are preparing for a HFC event.
 data SyncProtocol
@@ -99,13 +101,13 @@ data SyncNodeConfig = SyncNodeConfig
   , dncShelleyGenesisHash :: !GenesisHashShelley
   , dncAlonzoGenesisFile :: !GenesisFile
   , dncAlonzoGenesisHash :: !GenesisHashAlonzo
-  , dncByronSoftwareVersion :: !Byron.SoftwareVersion
   , dncByronProtocolVersion :: !Byron.ProtocolVersion
   , dncShelleyHardFork :: !TriggerHardFork
   , dncAllegraHardFork :: !TriggerHardFork
   , dncMaryHardFork :: !TriggerHardFork
   , dncAlonzoHardFork :: !TriggerHardFork
   , dncBabbageHardFork :: !TriggerHardFork
+  , dncConwayHardFork :: !TriggerHardFork
   }
 
 data SyncPreConfig = SyncPreConfig

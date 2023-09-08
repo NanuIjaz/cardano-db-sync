@@ -1,9 +1,11 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Cardano.DbSync.Era.Shelley.Generic.Tx.Alonzo (
@@ -22,10 +24,11 @@ module Cardano.DbSync.Era.Shelley.Generic.Tx.Alonzo (
   rmInps,
 ) where
 
-import qualified Cardano.Api.Shelley as Api
 import qualified Cardano.Crypto.Hash as Crypto
 import Cardano.Db (ScriptType (..))
 import Cardano.DbSync.Era.Shelley.Generic.Metadata
+import Cardano.DbSync.Era.Shelley.Generic.Script (fromTimelock)
+import Cardano.DbSync.Era.Shelley.Generic.ScriptData (ScriptData (..))
 import Cardano.DbSync.Era.Shelley.Generic.Tx.Allegra (getInterval)
 import Cardano.DbSync.Era.Shelley.Generic.Tx.Shelley
 import Cardano.DbSync.Era.Shelley.Generic.Tx.Types
@@ -51,12 +54,16 @@ import qualified Cardano.Ledger.SafeHash as Ledger
 import Cardano.Ledger.Shelley.Scripts (ScriptHash)
 import qualified Cardano.Ledger.Shelley.Tx as ShelleyTx
 import qualified Cardano.Ledger.Shelley.TxBody as Shelley
+import Cardano.Ledger.Shelley.TxCert as Shelley
 import Cardano.Prelude
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified Data.ByteString.Short as SBS
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+#if __GLASGOW_HASKELL__ >= 906
+import Data.Type.Equality (type (~))
+#endif
 import Lens.Micro
 import Ouroboros.Consensus.Cardano.Block (EraCrypto, StandardAlonzo, StandardCrypto)
 
@@ -99,6 +106,8 @@ fromAlonzoTx ioExtraPlutus mprices (blkIndex, tx) =
     , txScriptSizes = getPlutusSizes tx
     , txScripts = getScripts tx
     , txExtraKeyWitnesses = extraKeyWits txBody
+    , txVotingProcedure = []
+    , txProposalProcedure = []
     }
   where
     txBody :: Alonzo.AlonzoTxBody StandardAlonzo
@@ -123,7 +132,7 @@ fromAlonzoTx ioExtraPlutus mprices (blkIndex, tx) =
         MaryValue ada (MultiAsset maMap) = txOut ^. Core.valueTxOutL
         mDataHash = txOut ^. Alonzo.dataHashTxOutL
 
-    (finalMaps, redeemers) = resolveRedeemers ioExtraPlutus mprices tx
+    (finalMaps, redeemers) = resolveRedeemers ioExtraPlutus mprices tx (Left . toShelleyCert)
 
     -- This is true if second stage contract validation passes or there are no contracts.
     isValid2 :: Bool
@@ -170,13 +179,13 @@ resolveRedeemers ::
   , Alonzo.AlonzoEraTxWits era
   , Core.EraTx era
   , Alonzo.MaryEraTxBody era
-  , Core.ProtVerAtMost era 8 -- TODO: Try to find a way to reuse for Conway
   ) =>
   Bool ->
   Maybe Alonzo.Prices ->
   Core.Tx era ->
+  (TxCert era -> Cert) ->
   (RedeemerMaps, [(Word64, TxRedeemer)])
-resolveRedeemers ioExtraPlutus mprices tx =
+resolveRedeemers ioExtraPlutus mprices tx toCert =
   if not ioExtraPlutus
     then (initRedeemersMaps, [])
     else
@@ -184,6 +193,7 @@ resolveRedeemers ioExtraPlutus mprices tx =
         zip [0 ..] $
           Map.toList (Alonzo.unRedeemers (tx ^. (Core.witsTxL . Alonzo.rdmrsTxWitsL)))
   where
+    txBody :: Core.TxBody era
     txBody = tx ^. Core.bodyTxL
 
     withdrawalsNoRedeemers :: Map (Shelley.RewardAcnt StandardCrypto) TxWithdrawal
@@ -192,11 +202,11 @@ resolveRedeemers ioExtraPlutus mprices tx =
         Shelley.unWithdrawals $
           txBody ^. Core.withdrawalsTxBodyL
 
-    txCertsNoRedeemers :: [(Shelley.DCert StandardCrypto, TxCertificate)]
+    txCertsNoRedeemers :: [(Cert, TxCertificate)]
     txCertsNoRedeemers =
-      zipWith (\n dcert -> (dcert, mkTxCertificate n dcert)) [0 ..] $
+      zipWith (\n dcert -> (dcert, toTxCert n dcert)) [0 ..] $
         toList $
-          txBody ^. Shelley.certsTxBodyL
+          toCert <$> (txBody ^. Core.certsTxBodyL)
 
     txInsMissingRedeemer :: Map (ShelleyTx.TxIn StandardCrypto) TxIn
     txInsMissingRedeemer = Map.fromList $ fmap (\inp -> (inp, fromTxIn inp)) $ toList $ txBody ^. Core.inputsTxBodyL
@@ -226,7 +236,7 @@ resolveRedeemers ioExtraPlutus mprices tx =
           Just (Alonzo.Spending txIn) -> handleTxInPtr rdmrIx txIn rdmrMps
           Just (Alonzo.Rewarding rwdAcnt) -> handleRewardPtr rdmrIx rwdAcnt rdmrMps
           Just prp@(Alonzo.Certifying dcert) -> case strictMaybeToMaybe (Alonzo.rdptr txBody prp) of
-            Just ptr' | ptr == ptr' -> handleCertPtr rdmrIx dcert rdmrMps
+            Just ptr' | ptr == ptr' -> handleCertPtr rdmrIx (toCert dcert) rdmrMps
             _ -> (rdmrMps, Nothing)
           Nothing -> (rdmrMps, Nothing)
 
@@ -255,7 +265,7 @@ handleRewardPtr rdmrIx rwdAcnt mps = case Map.lookup rwdAcnt (rmWdrl mps) of
     let wdrl' = wdrl {txwRedeemerIndex = Just rdmrIx}
      in (mps {rmWdrl = Map.insert rwdAcnt wdrl' (rmWdrl mps)}, Right <$> scriptHashAcnt rwdAcnt)
 
-handleCertPtr :: Word64 -> Shelley.DCert StandardCrypto -> RedeemerMaps -> (RedeemerMaps, Maybe (Either TxIn ByteString))
+handleCertPtr :: Word64 -> Cert -> RedeemerMaps -> (RedeemerMaps, Maybe (Either TxIn ByteString))
 handleCertPtr rdmrIx dcert mps =
   (mps {rmCerts = map f (rmCerts mps)}, Right <$> scriptHashCert dcert)
   where
@@ -264,12 +274,12 @@ handleCertPtr rdmrIx dcert mps =
 
 data RedeemerMaps = RedeemerMaps
   { rmWdrl :: Map (Shelley.RewardAcnt StandardCrypto) TxWithdrawal
-  , rmCerts :: [(Shelley.DCert StandardCrypto, TxCertificate)]
+  , rmCerts :: [(Cert, TxCertificate)]
   , rmInps :: Map (ShelleyTx.TxIn StandardCrypto) TxIn
   }
 
 mkTxScript ::
-  (EraCrypto era ~ StandardCrypto, Ledger.Era era) =>
+  (Ledger.Era era) =>
   (ScriptHash StandardCrypto, Alonzo.AlonzoScript era) ->
   TxScript
 mkTxScript (hsh, script) =
@@ -287,12 +297,13 @@ mkTxScript (hsh, script) =
         Alonzo.TimelockScript {} -> Timelock
         Alonzo.PlutusScript Alonzo.PlutusV1 _s -> PlutusV1
         Alonzo.PlutusScript Alonzo.PlutusV2 _s -> PlutusV2
+        Alonzo.PlutusScript Alonzo.PlutusV3 _s -> PlutusV3
 
     timelockJsonScript :: Maybe ByteString
     timelockJsonScript =
       case script of
         Alonzo.TimelockScript s ->
-          Just . LBS.toStrict . Aeson.encode $ Api.fromAllegraTimelock s
+          Just . LBS.toStrict . Aeson.encode $ fromTimelock s
         Alonzo.PlutusScript {} -> Nothing
 
     plutusCborScript :: Maybe ByteString
@@ -335,8 +346,7 @@ mkTxData (dataHash, dt) = PlutusData dataHash (jsonData dt) (Ledger.originalByte
     jsonData =
       LBS.toStrict
         . Aeson.encode
-        . Api.scriptDataToJson Api.ScriptDataJsonDetailedSchema
-        . Api.fromAlonzoData
+        . ScriptData
 
 extraKeyWits ::
   AlonzoEraTxBody era =>
@@ -350,11 +360,20 @@ extraKeyWits txBody =
 scriptHashAcnt :: Shelley.RewardAcnt StandardCrypto -> Maybe ByteString
 scriptHashAcnt rewardAddr = getCredentialScriptHash $ Ledger.getRwdCred rewardAddr
 
-scriptHashCert :: Shelley.DCert StandardCrypto -> Maybe ByteString
-scriptHashCert cert =
+scriptHashCert :: Cert -> Maybe ByteString
+scriptHashCert cert = case cert of
+  Left scert -> scriptHashCertShelley scert
+  Right ccert -> scriptHashCertConway ccert
+
+-- TODO: Conway
+scriptHashCertConway :: ConwayCert -> Maybe ByteString
+scriptHashCertConway _cert = Nothing
+
+scriptHashCertShelley :: ShelleyCert -> Maybe ByteString
+scriptHashCertShelley cert =
   case cert of
-    Shelley.DCertDeleg (Shelley.DeRegKey cred) ->
+    Shelley.ShelleyTxCertDelegCert (Shelley.ShelleyUnRegCert cred) ->
       getCredentialScriptHash cred
-    Shelley.DCertDeleg (Shelley.Delegate (Shelley.Delegation cred _)) ->
+    Shelley.ShelleyTxCertDelegCert (Shelley.ShelleyDelegCert cred _) ->
       getCredentialScriptHash cred
     _ -> Nothing

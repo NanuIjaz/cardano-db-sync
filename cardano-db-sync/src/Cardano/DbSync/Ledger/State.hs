@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -8,6 +9,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Cardano.DbSync.Ledger.State (
@@ -23,6 +25,8 @@ module Cardano.DbSync.Ledger.State (
   hashToAnnotation,
   getHeaderHash,
   runLedgerStateWriteThread,
+  getStakeSlice,
+  getSliceMeta,
 ) where
 
 import Cardano.BM.Trace (Trace, logInfo, logWarning)
@@ -63,8 +67,12 @@ import Control.Concurrent.STM.TBQueue (TBQueue, newTBQueueIO, readTBQueue, write
 import qualified Control.Exception as Exception
 
 import qualified Data.ByteString.Base16 as Base16
+#if __GLASGOW_HASKELL__ >= 906
+import Data.Type.Equality (type (~))
+#endif
 
 import Cardano.DbSync.Api.Types (LedgerEnv (..), SyncOptions (..))
+import Cardano.DbSync.Error (SyncNodeError (..), fromEitherSTM)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified Data.ByteString.Short as SBS
@@ -74,6 +82,7 @@ import qualified Data.Set as Set
 import qualified Data.Strict.Maybe as Strict
 import qualified Data.Text as Text
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
+import GHC.IO.Exception (userError)
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block (
   CodecConfig,
@@ -149,7 +158,7 @@ ledgerDbCurrent = either id id . AS.head . ledgerDbCheckpoints
 
 mkHasLedgerEnv ::
   Trace IO Text ->
-  Consensus.ProtocolInfo IO CardanoBlock ->
+  Consensus.ProtocolInfo CardanoBlock ->
   LedgerStateDir ->
   Ledger.Network ->
   SystemStart ->
@@ -174,7 +183,7 @@ mkHasLedgerEnv trce protoInfo dir nw systemStart syncOptions = do
       , leStateWriteQueue = swQueue
       }
 
-initCardanoLedgerState :: Consensus.ProtocolInfo IO CardanoBlock -> CardanoLedgerState
+initCardanoLedgerState :: Consensus.ProtocolInfo CardanoBlock -> CardanoLedgerState
 initCardanoLedgerState pInfo =
   CardanoLedgerState
     { clsState = Consensus.pInfoInitLedger pInfo
@@ -190,7 +199,7 @@ readStateUnsafe :: HasLedgerEnv -> STM LedgerDB
 readStateUnsafe env = do
   mState <- readTVar $ leStateVar env
   case mState of
-    Strict.Nothing -> panic "LedgerState.readStateUnsafe: Ledger state is not found"
+    Strict.Nothing -> throwSTM $ userError "LedgerState.readStateUnsafe: Ledger state is not found"
     Strict.Just st -> pure st
 
 applyBlockAndSnapshot :: HasLedgerEnv -> CardanoBlock -> Bool -> IO (ApplyResult, Bool)
@@ -208,11 +217,12 @@ applyBlock env blk = do
   atomically $ do
     !ledgerDB <- readStateUnsafe env
     let oldState = ledgerDbCurrent ledgerDB
-    let !result = applyBlk (ExtLedgerCfg (getTopLevelconfigHasLedger env)) blk (clsState oldState)
-    let !ledgerEvents = mapMaybe convertAuxLedgerEvent (lrEvents result)
+    !result <- fromEitherSTM $ tickThenReapplyCheckHash (ExtLedgerCfg (getTopLevelconfigHasLedger env)) blk (clsState oldState)
+    let !ledgerEventsFull = mapMaybe convertAuxLedgerEvent (lrEvents result)
+    let !(ledgerEvents, deposits) = splitDeposits ledgerEventsFull
     let !newLedgerState = lrResult result
     !details <- getSlotDetails env (ledgerState newLedgerState) time (cardanoBlockSlotNo blk)
-    let !newEpoch = mkNewEpoch (clsState oldState) newLedgerState (findAdaPots ledgerEvents)
+    !newEpoch <- fromEitherSTM $ mkNewEpoch (clsState oldState) newLedgerState (findAdaPots ledgerEvents)
     let !newEpochBlockNo = applyToEpochBlockNo (isJust $ blockIsEBB blk) (isJust newEpoch) (clsEpochBlockNo oldState)
     let !newState = CardanoLedgerState newLedgerState newEpochBlockNo
     let !ledgerDB' = pushLedgerDB ledgerDB newState
@@ -222,34 +232,34 @@ applyBlock env blk = do
             { apPrices = getPrices newState
             , apPoolsRegistered = getRegisteredPools oldState
             , apNewEpoch = maybeToStrict newEpoch
+            , apOldLedger = Strict.Just oldState
             , apSlotDetails = details
-            , apStakeSlice = stakeSlice newState details
+            , apStakeSlice = getStakeSlice env newState False
             , apEvents = ledgerEvents
+            , apDepositsMap = DepositsMap deposits
             }
     pure (oldState, appResult)
   where
-    applyBlk ::
-      ExtLedgerCfg CardanoBlock ->
-      CardanoBlock ->
-      ExtLedgerState CardanoBlock ->
-      LedgerResult (ExtLedgerState CardanoBlock) (ExtLedgerState CardanoBlock)
-    applyBlk cfg block lsb =
-      case tickThenReapplyCheckHash cfg block lsb of
-        Left err -> panic err
-        Right result -> result
-
-    mkNewEpoch :: ExtLedgerState CardanoBlock -> ExtLedgerState CardanoBlock -> Maybe AdaPots -> Maybe Generic.NewEpoch
-    mkNewEpoch oldState newState mPots =
-      if ledgerEpochNo env newState /= ledgerEpochNo env oldState + 1
-        then Nothing
-        else
-          Just $
-            Generic.NewEpoch
-              { Generic.neEpoch = ledgerEpochNo env newState
-              , Generic.neIsEBB = isJust $ blockIsEBB blk
-              , Generic.neAdaPots = maybeToStrict mPots
-              , Generic.neEpochUpdate = Generic.epochUpdate newState
-              }
+    mkNewEpoch :: ExtLedgerState CardanoBlock -> ExtLedgerState CardanoBlock -> Maybe AdaPots -> Either SyncNodeError (Maybe Generic.NewEpoch)
+    mkNewEpoch oldState newState mPots = do
+      let currEpochE = ledgerEpochNo env newState
+          prevEpochE = ledgerEpochNo env oldState
+      -- pass on error when trying to get ledgerEpochNo
+      case (currEpochE, prevEpochE) of
+        (Left err, _) -> Left err
+        (_, Left err) -> Left err
+        (Right currEpoch, Right prevEpoch) -> do
+          if currEpoch /= prevEpoch + 1
+            then Right Nothing
+            else
+              Right $
+                Just $
+                  Generic.NewEpoch
+                    { Generic.neEpoch = currEpoch
+                    , Generic.neIsEBB = isJust $ blockIsEBB blk
+                    , Generic.neAdaPots = maybeToStrict mPots
+                    , Generic.neEpochUpdate = Generic.epochUpdate newState
+                    }
 
     applyToEpochBlockNo :: Bool -> Bool -> EpochBlockNo -> EpochBlockNo
     applyToEpochBlockNo True _ _ = EBBEpochBlockNo
@@ -258,20 +268,20 @@ applyBlock env blk = do
     applyToEpochBlockNo _ _ GenesisEpochBlockNo = EpochBlockNo 0
     applyToEpochBlockNo _ _ EBBEpochBlockNo = EpochBlockNo 0
 
-    stakeSliceMinSize :: Word64
-    stakeSliceMinSize = 2000
+getStakeSlice :: HasLedgerEnv -> CardanoLedgerState -> Bool -> Generic.StakeSliceRes
+getStakeSlice env cls isMigration =
+  case clsEpochBlockNo cls of
+    EpochBlockNo n ->
+      Generic.getStakeSlice
+        (leProtocolInfo env)
+        n
+        (clsState cls)
+        isMigration
+    _ -> Generic.NoSlices
 
-    stakeSlice :: CardanoLedgerState -> SlotDetails -> Generic.StakeSliceRes
-    stakeSlice cls details =
-      case clsEpochBlockNo cls of
-        EpochBlockNo n ->
-          Generic.getStakeSlice
-            (leProtocolInfo env)
-            (sdEpochNo details)
-            n
-            stakeSliceMinSize
-            (clsState cls)
-        _ -> Generic.NoSlices
+getSliceMeta :: Generic.StakeSliceRes -> Maybe (Bool, EpochNo)
+getSliceMeta (Generic.Slice (Generic.StakeSlice epochNo _) isFinal) = Just (isFinal, epochNo)
+getSliceMeta _ = Nothing
 
 storeSnapshotAndCleanupMaybe ::
   HasLedgerEnv ->
@@ -692,7 +702,7 @@ getRegisteredPools st =
     LedgerStateMary sts -> getRegisteredPoolShelley sts
     LedgerStateAlonzo ats -> getRegisteredPoolShelley ats
     LedgerStateBabbage bts -> getRegisteredPoolShelley bts
-    LedgerStateConway _stc -> panic "TODO: Conway 2"
+    LedgerStateConway stc -> getRegisteredPoolShelley stc
 
 getRegisteredPoolShelley ::
   forall p era.
@@ -702,20 +712,20 @@ getRegisteredPoolShelley ::
 getRegisteredPoolShelley lState =
   Map.keysSet $
     Shelley.psStakePoolParams $
-      Shelley.dpsPState $
-        Shelley.lsDPState $
+      Shelley.certPState $
+        Shelley.lsCertState $
           Shelley.esLState $
             Shelley.nesEs $
               Consensus.shelleyLedgerState lState
 
-ledgerEpochNo :: HasLedgerEnv -> ExtLedgerState CardanoBlock -> EpochNo
+ledgerEpochNo :: HasLedgerEnv -> ExtLedgerState CardanoBlock -> Either SyncNodeError EpochNo
 ledgerEpochNo env cls =
   case ledgerTipSlot (ledgerState cls) of
-    Origin -> 0 -- An empty chain is in epoch 0
+    Origin -> Right 0 -- An empty chain is in epoch 0
     NotOrigin slot ->
       case runExcept $ epochInfoEpoch epochInfo slot of
-        Left err -> panic $ "ledgerEpochNo: " <> textShow err
-        Right en -> en
+        Left err -> Left $ SNErrLedgerState $ "unable to use slot: " <> show slot <> "to get ledgerEpochNo: " <> show err
+        Right en -> Right en
   where
     epochInfo :: EpochInfo (Except Consensus.PastHorizonException)
     epochInfo = epochInfoLedger (configLedger $ getTopLevelconfigHasLedger env) (hardForkLedgerStatePerEra $ ledgerState cls)
@@ -726,23 +736,24 @@ tickThenReapplyCheckHash ::
   ExtLedgerCfg CardanoBlock ->
   CardanoBlock ->
   ExtLedgerState CardanoBlock ->
-  Either Text (LedgerResult (ExtLedgerState CardanoBlock) (ExtLedgerState CardanoBlock))
+  Either SyncNodeError (LedgerResult (ExtLedgerState CardanoBlock) (ExtLedgerState CardanoBlock))
 tickThenReapplyCheckHash cfg block lsb =
   if blockPrevHash block == ledgerTipHash (ledgerState lsb)
     then Right $ tickThenReapplyLedgerResult cfg block lsb
     else
       Left $
-        mconcat
-          [ "Ledger state hash mismatch. Ledger head is slot "
-          , textShow (unSlotNo $ fromWithOrigin (SlotNo 0) (ledgerTipSlot $ ledgerState lsb))
-          , " hash "
-          , renderByteArray (Cardano.unChainHash (ledgerTipHash $ ledgerState lsb))
-          , " but block previous hash is "
-          , renderByteArray (Cardano.unChainHash $ blockPrevHash block)
-          , " and block current hash is "
-          , renderByteArray (SBS.fromShort . Consensus.getOneEraHash $ blockHash block)
-          , "."
-          ]
+        SNErrLedgerState $
+          mconcat
+            [ "Ledger state hash mismatch. Ledger head is slot "
+            , show (unSlotNo $ fromWithOrigin (SlotNo 0) (ledgerTipSlot $ ledgerState lsb))
+            , " hash "
+            , Text.unpack $ renderByteArray (Cardano.unChainHash (ledgerTipHash $ ledgerState lsb))
+            , " but block previous hash is "
+            , Text.unpack $ renderByteArray (Cardano.unChainHash $ blockPrevHash block)
+            , " and block current hash is "
+            , Text.unpack $ renderByteArray (SBS.fromShort . Consensus.getOneEraHash $ blockHash block)
+            , "."
+            ]
 
 getHeaderHash :: HeaderHash CardanoBlock -> ByteString
 getHeaderHash bh = SBS.fromShort (Consensus.getOneEraHash bh)

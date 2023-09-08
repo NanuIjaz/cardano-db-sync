@@ -11,18 +11,30 @@ module Test.Cardano.Db.Mock.Unit.Babbage.CommandLineArg.MigrateConsumedPruneTxOu
   noPruneAndRollBack,
   pruneSameBlock,
   noPruneSameBlock,
+  migrateAndPruneRestart,
+  pruneRestartMissingFlag,
 ) where
 
 import qualified Cardano.Db as DB
+import Cardano.DbSync (SyncNodeParams (..))
 import Cardano.Mock.ChainSync.Server (IOManager, addBlock)
 import Cardano.Mock.Forging.Interpreter (forgeNext)
 import qualified Cardano.Mock.Forging.Tx.Babbage as Babbage
 import Cardano.Mock.Forging.Types (UTxOIndex (..))
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict (atomically)
 import Control.Monad (void)
 import Data.Text (Text)
 import Ouroboros.Consensus.Block (blockPoint)
-import Test.Cardano.Db.Mock.Config (CommandLineArgs (..), TxOutParam (..), babbageConfigDir, startDBSync, withCustomConfig, initCommandLineArgs)
+import Test.Cardano.Db.Mock.Config (
+  CommandLineArgs (..),
+  DBSyncEnv (..),
+  babbageConfigDir,
+  initCommandLineArgs,
+  startDBSync,
+  stopDBSync,
+  withCustomConfig,
+ )
 import Test.Cardano.Db.Mock.Examples (mockBlock0, mockBlock1)
 import Test.Cardano.Db.Mock.UnifiedApi (
   forgeAndSubmitBlocks,
@@ -32,39 +44,30 @@ import Test.Cardano.Db.Mock.UnifiedApi (
   withBabbageFindLeaderAndSubmit,
   withBabbageFindLeaderAndSubmitTx,
  )
-import Test.Cardano.Db.Mock.Validate (assertBlockNoBackoff, assertEqQuery, assertTxCount, assertUnspentTx)
+import Test.Cardano.Db.Mock.Validate (assertBlockNoBackoff, assertEqQuery, assertTxCount, assertUnspentTx, checkStillRuns)
 import Test.Tasty.HUnit (Assertion)
-
--- defaults for
-mkCommandLineArgs :: TxOutParam -> CommandLineArgs
-mkCommandLineArgs TxOutParam {..} =
-  initCommandLineArgs
-    { claMigrateConsumed = paramMigrateConsumed
-    , claPruneTxOut = paramPruneTxOut
-    }
 
 commandLineArgCheck :: IOManager -> [(Text, Text)] -> Assertion
 commandLineArgCheck = do
-  withCustomConfig (mkCommandLineArgs txOutParam) babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
     void $
       withBabbageFindLeaderAndSubmitTx interpreter mockServer $
         Babbage.mkPaymentTx (UTxOIndex 0) (UTxOIndex 1) 10000 500
 
     startDBSync dbSyncEnv
     assertBlockNoBackoff dbSyncEnv 1
-    assertEqQuery dbSyncEnv DB.isMigrated True "missing consumed_by_tx_in_id column when flag --consumed-tx-out active"
+    assertEqQuery dbSyncEnv DB.queryTxConsumedColumnExists True "missing consumed_by_tx_in_id column when flag --consumed-tx-out active"
   where
-    txOutParam =
-      TxOutParam
-        { paramMigrateConsumed = True
-        , paramPruneTxOut = False
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = False
         }
-
     testLabel = "CLASimple"
 
 basicPrune :: IOManager -> [(Text, Text)] -> Assertion
 basicPrune = do
-  withCustomConfig (mkCommandLineArgs txOutParam) babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
     startDBSync dbSyncEnv
     -- add 50 block
     b1 <- forgeAndSubmitBlocks interpreter mockServer 50
@@ -83,16 +86,16 @@ basicPrune = do
     -- check Unspent tx match after pruning
     assertUnspentTx dbSyncEnv
   where
-    txOutParam =
-      TxOutParam
-        { paramMigrateConsumed = True
-        , paramPruneTxOut = True
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = True
         }
     testLabel = "CLAPrune"
 
 pruneWithSimpleRollback :: IOManager -> [(Text, Text)] -> Assertion
 pruneWithSimpleRollback = do
-  withCustomConfig (mkCommandLineArgs txOutParam) babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
     blk0 <- forgeNext interpreter mockBlock0
     blk1 <- forgeNext interpreter mockBlock1
     atomically $ addBlock mockServer blk0
@@ -112,16 +115,16 @@ pruneWithSimpleRollback = do
     assertBlockNoBackoff dbSyncEnv $ fullBlockSize b1
   where
     fullBlockSize b = fromIntegral $ length b + 4
-    txOutParam =
-      TxOutParam
-        { paramMigrateConsumed = True
-        , paramPruneTxOut = True
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = True
         }
     testLabel = "CLAPruneSimpleRollback"
 
 pruneWithFullTxRollback :: IOManager -> [(Text, Text)] -> Assertion
 pruneWithFullTxRollback = do
-  withCustomConfig (mkCommandLineArgs txOutParam) babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
     startDBSync dbSyncEnv
     blk0 <- forgeNextFindLeaderAndSubmit interpreter mockServer []
     void $ withBabbageFindLeaderAndSubmit interpreter mockServer $ \st -> do
@@ -143,10 +146,10 @@ pruneWithFullTxRollback = do
     assertEqQuery dbSyncEnv DB.queryTxOutCount 16 "new epoch didn't prune tx_out column that are null"
     assertUnspentTx dbSyncEnv
   where
-    txOutParam =
-      TxOutParam
-        { paramMigrateConsumed = True
-        , paramPruneTxOut = True
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = True
         }
     testLabel = "CLAPruneOnFullRollback"
 
@@ -154,7 +157,7 @@ pruneWithFullTxRollback = do
 -- In these tests, 2 x securityParam = 20 blocks.
 pruningShouldKeepSomeTx :: IOManager -> [(Text, Text)] -> Assertion
 pruningShouldKeepSomeTx = do
-  withCustomConfig (mkCommandLineArgs txOutParam) babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
     startDBSync dbSyncEnv
     b1 <- forgeAndSubmitBlocks interpreter mockServer 80
     -- these two blocs + tx will fall withing the last 20 blocks so should not be pruned
@@ -170,17 +173,17 @@ pruningShouldKeepSomeTx = do
     -- the prune should have removed all
     assertEqQuery dbSyncEnv DB.queryTxOutConsumedCount 0 "Unexpected TxOutConsumedByTxInId count after prune"
   where
-    txOutParam =
-      TxOutParam
-        { paramMigrateConsumed = True
-        , paramPruneTxOut = True
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = True
         }
     testLabel = "CLAPruneCorrectAmount"
 
 -- prune with rollback
 pruneAndRollBackOneBlock :: IOManager -> [(Text, Text)] -> Assertion
 pruneAndRollBackOneBlock = do
-  withCustomConfig (mkCommandLineArgs txOutParam) babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
     startDBSync dbSyncEnv
     void $ forgeAndSubmitBlocks interpreter mockServer 98
     -- add 2 blocks with tx
@@ -206,17 +209,17 @@ pruneAndRollBackOneBlock = do
     -- everything should be pruned
     assertEqQuery dbSyncEnv DB.queryTxOutConsumedCount 0 "Unexpected TxOutConsumedByTxInId count after rollback"
   where
-    txOutParam =
-      TxOutParam
-        { paramMigrateConsumed = True
-        , paramPruneTxOut = True
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = True
         }
     testLabel = "CLAPruneAndRollBack"
 
 -- consume with rollback
 noPruneAndRollBack :: IOManager -> [(Text, Text)] -> Assertion
 noPruneAndRollBack = do
-  withCustomConfig (mkCommandLineArgs txOutParam) babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
     startDBSync dbSyncEnv
     void $ forgeAndSubmitBlocks interpreter mockServer 98
     -- add 2 blocks with tx
@@ -242,16 +245,16 @@ noPruneAndRollBack = do
     -- everything should be pruned
     assertEqQuery dbSyncEnv DB.queryTxOutConsumedCount 1 "Unexpected TxOutConsumedByTxInId count after rollback"
   where
-    txOutParam =
-      TxOutParam
-        { paramMigrateConsumed = True
-        , paramPruneTxOut = False
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = False
         }
     testLabel = "CLAPruneAndRollBack"
 
 pruneSameBlock :: IOManager -> [(Text, Text)] -> Assertion
 pruneSameBlock =
-  withCustomConfig (mkCommandLineArgs txOutParam) babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
     startDBSync dbSyncEnv
     void $ forgeAndSubmitBlocks interpreter mockServer 76
     blk77 <- forgeNextFindLeaderAndSubmit interpreter mockServer []
@@ -270,16 +273,16 @@ pruneSameBlock =
     assertBlockNoBackoff dbSyncEnv 78
     assertEqQuery dbSyncEnv DB.queryTxOutConsumedCount 0 "Unexpected TxOutConsumedByTxInId after rollback"
   where
-    txOutParam =
-      TxOutParam
-        { paramMigrateConsumed = True
-        , paramPruneTxOut = True
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = True
         }
     testLabel = "CLAPruneSameBlock"
 
 noPruneSameBlock :: IOManager -> [(Text, Text)] -> Assertion
 noPruneSameBlock =
-  withCustomConfig (mkCommandLineArgs txOutParam) babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
     startDBSync dbSyncEnv
     void $ forgeAndSubmitBlocks interpreter mockServer 96
     blk97 <- forgeNextFindLeaderAndSubmit interpreter mockServer []
@@ -296,9 +299,60 @@ noPruneSameBlock =
     assertBlockNoBackoff dbSyncEnv 98
     assertEqQuery dbSyncEnv DB.queryTxOutConsumedCount 0 "Unexpected TxOutConsumedByTxInId after rollback"
   where
-    txOutParam =
-      TxOutParam
-        { paramMigrateConsumed = True
-        , paramPruneTxOut = True
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = True
         }
     testLabel = "CLANoPruneSameBlock"
+
+migrateAndPruneRestart :: IOManager -> [(Text, Text)] -> Assertion
+migrateAndPruneRestart = do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+    let DBSyncEnv {..} = dbSyncEnv
+    startDBSync dbSyncEnv
+    void $ forgeAndSubmitBlocks interpreter mockServer 50
+    assertBlockNoBackoff dbSyncEnv 50
+    -- stop
+    stopDBSync dbSyncEnv
+    -- update the syncParams to include new params
+    let newDbSyncParams = dbSyncParams {enpMigrateConsumed = False, enpPruneTxOut = False}
+        newDbSyncEnv = dbSyncEnv {dbSyncParams = newDbSyncParams}
+    startDBSync newDbSyncEnv
+    -- there is a slight delay before flag is checked
+    threadDelay 6000000
+    -- checkStillRuns uses `poll` due to this being inside Async and passes along our thrown exception
+    checkStillRuns dbSyncEnv
+  where
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = True
+        , claPruneTxOut = False
+        }
+    testLabel = "CLAMigrateAndPruneRestart"
+
+pruneRestartMissingFlag :: IOManager -> [(Text, Text)] -> Assertion
+pruneRestartMissingFlag = do
+  withCustomConfig cmdLineArgs babbageConfigDir testLabel $ \interpreter mockServer dbSyncEnv -> do
+    let DBSyncEnv {..} = dbSyncEnv
+
+    startDBSync dbSyncEnv
+    void $ forgeAndSubmitBlocks interpreter mockServer 50
+    assertBlockNoBackoff dbSyncEnv 50
+    -- stop
+    stopDBSync dbSyncEnv
+    -- update the syncParams to include new params
+    let newDbSyncParams = dbSyncParams {enpMigrateConsumed = False, enpPruneTxOut = False}
+        newDbSyncEnv = dbSyncEnv {dbSyncParams = newDbSyncParams}
+    startDBSync newDbSyncEnv
+    -- there is a slight delay before flag is checked
+    threadDelay 6000000
+    -- checkStillRuns uses `poll` due to this being inside Async and passes along our thrown exception
+    checkStillRuns dbSyncEnv
+  where
+    cmdLineArgs =
+      initCommandLineArgs
+        { claMigrateConsumed = False
+        , claPruneTxOut = True
+        }
+    testLabel = "CLApruneRestartMissingFlag"

@@ -1,9 +1,11 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Cardano.DbSync.Era.Shelley.Generic.Tx.Allegra (
@@ -12,9 +14,9 @@ module Cardano.DbSync.Era.Shelley.Generic.Tx.Allegra (
   getScripts,
 ) where
 
-import qualified Cardano.Api.Shelley as Api
 import Cardano.Db (ScriptType (..))
 import Cardano.DbSync.Era.Shelley.Generic.Metadata
+import Cardano.DbSync.Era.Shelley.Generic.Script (fromTimelock)
 import Cardano.DbSync.Era.Shelley.Generic.Tx.Shelley (
   calcWithdrawalSum,
   getTxMetadata,
@@ -40,6 +42,9 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified Data.Map.Strict as Map
+#if __GLASGOW_HASKELL__ >= 906
+import Data.Type.Equality (type (~))
+#endif
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Cardano.Block (StandardAllegra, StandardCrypto)
 
@@ -70,6 +75,8 @@ fromAllegraTx (blkIndex, tx) =
     , txScriptSizes = [] -- Allegra does not support plutus scripts
     , txScripts = scripts
     , txExtraKeyWitnesses = []
+    , txVotingProcedure = []
+    , txProposalProcedure = []
     }
   where
     txBody :: Core.TxBody StandardAllegra
@@ -106,7 +113,7 @@ getAuxScripts maux =
       map (\scr -> (Core.hashScript @era scr, scr)) $ toList scrs
 
 mkTxScript ::
-  (Era era, EraCrypto era ~ StandardCrypto) =>
+  (Era era) =>
   (ScriptHash StandardCrypto, Timelock era) ->
   TxScript
 mkTxScript (hsh, script) =
@@ -116,7 +123,7 @@ mkTxScript (hsh, script) =
     , txScriptPlutusSize = Nothing
     , txScriptJson =
         Just . LBS.toStrict . Aeson.encode $
-          Api.fromAllegraTimelock script
+          fromTimelock script
     , txScriptCBOR = Nothing
     }
 

@@ -60,13 +60,13 @@ insertValidateGenesisDist ::
   Bool ->
   ExceptT SyncNodeError IO ()
 insertValidateGenesisDist syncEnv networkName cfg shelleyInitiation = do
-  hasConsumed <- liftIO $ getHasConsumed syncEnv
+  hasConsumed <- liftIO $ getHasConsumedOrPruneTxOut syncEnv
   prunes <- liftIO $ getPrunes syncEnv
   -- Setting this to True will log all 'Persistent' operations which is great
   -- for debugging, but otherwise *way* too chatty.
   when (not shelleyInitiation && (hasInitialFunds || hasStakes)) $ do
-    liftIO $ logError tracer $ renderSyncNodeError NEIgnoreShelleyInitiation
-    throwError NEIgnoreShelleyInitiation
+    liftIO $ logError tracer $ show SNErrIgnoreShelleyInitiation
+    throwError SNErrIgnoreShelleyInitiation
   if False
     then newExceptT $ DB.runDbIohkLogging (envBackend syncEnv) tracer (insertAction hasConsumed prunes)
     else newExceptT $ DB.runDbIohkNoLogging (envBackend syncEnv) (insertAction hasConsumed prunes)
@@ -232,7 +232,7 @@ insertTxOuts trce hasConsumed blkId (ShelleyTx.TxIn txInId _, txOut) = do
         , DB.txBlockIndex = 0
         , DB.txOutSum = Generic.coinToDbLovelace (txOut ^. Core.valueTxOutL)
         , DB.txFee = DB.DbLovelace 0
-        , DB.txDeposit = 0
+        , DB.txDeposit = Just 0
         , DB.txSize = 0 -- Genesis distribution address to not have a size.
         , DB.txInvalidHereafter = Nothing
         , DB.txInvalidBefore = Nothing
@@ -279,7 +279,7 @@ insertStaking tracer cache blkId genesis = do
           , DB.txBlockIndex = 0
           , DB.txOutSum = DB.DbLovelace 0
           , DB.txFee = DB.DbLovelace 0
-          , DB.txDeposit = 0
+          , DB.txDeposit = Just 0
           , DB.txSize = 0
           , DB.txInvalidHereafter = Nothing
           , DB.txInvalidBefore = Nothing

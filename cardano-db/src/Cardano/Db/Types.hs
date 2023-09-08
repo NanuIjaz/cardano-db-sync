@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -17,8 +18,17 @@ module Cardano.Db.Types (
   ScriptPurpose (..),
   ScriptType (..),
   PoolCertAction (..),
+  PruneConsumeMigration (..),
   CertNo (..),
   PoolCert (..),
+  ExtraMigration (..),
+  VoteUrl (..),
+  Vote (..),
+  VoterRole (..),
+  GovActionType (..),
+  isStakeDistrComplete,
+  wasPruneTxOutPreviouslySet,
+  extraDescription,
   deltaCoinToDbInt65,
   integerToDbInt65,
   lovelaceToAda,
@@ -35,6 +45,12 @@ module Cardano.Db.Types (
   renderScriptType,
   renderSyncState,
   showRewardSource,
+  renderVote,
+  readVote,
+  renderVoterRole,
+  readVoterRole,
+  renderGovActionType,
+  readGovActionType,
   word64ToAda,
 ) where
 
@@ -70,9 +86,10 @@ instance ToJSON Ada where
   -- toJSON (Ada ada) = Data.Aeson.Types.Number $ fromRational $ toRational ada
   -- `Number` results in it becoming `7.3112484749601107e10` while the old explorer is returning `73112484749.601107`
   toEncoding (Ada ada) =
-    unsafeToEncoding $ -- convert ByteString to Aeson's Encoding
-      Builder.string8 $ -- convert String to ByteString using Latin1 encoding
-        showFixed True ada -- convert Micro to String chopping off trailing zeros
+    unsafeToEncoding $
+      Builder.string8 $ -- convert ByteString to Aeson's Encoding
+        showFixed True ada -- convert String to ByteString using Latin1 encoding
+        -- convert Micro to String chopping off trailing zeros
 
   toJSON = error "Ada.toJSON not supported due to numeric issues. Use toEncoding instead."
 
@@ -86,13 +103,16 @@ newtype AssetFingerprint = AssetFingerprint
 
 mkAssetFingerprint :: ByteString -> ByteString -> AssetFingerprint
 mkAssetFingerprint policyBs assetNameBs =
-  AssetFingerprint . Bech32.encodeLenient hrp . Bech32.dataPartFromBytes . ByteArray.convert $
-    Crypto.Hash.hash @_ @Blake2b_160 (policyBs <> assetNameBs)
+  AssetFingerprint
+    . Bech32.encodeLenient hrp
+    . Bech32.dataPartFromBytes
+    . ByteArray.convert
+    $ Crypto.Hash.hash @_ @Blake2b_160 (policyBs <> assetNameBs)
   where
     hrp :: Bech32.HumanReadablePart
     hrp =
-      fromRight (error "mkAssetFingerprint: Bad human readable part") $ -- Should never happen
-        Bech32.humanReadablePartFromText "asset"
+      fromRight (error "mkAssetFingerprint: Bad human readable part") $
+        Bech32.humanReadablePartFromText "asset" -- Should never happen
 
 -- This is horrible. Need a 'Word64' with an extra sign bit.
 data DbInt65
@@ -136,6 +156,7 @@ data ScriptType
   | Timelock
   | PlutusV1
   | PlutusV2
+  | PlutusV3
   deriving (Eq, Generic, Show)
 
 data PoolCertAction
@@ -159,8 +180,60 @@ data PoolCert = PoolCert
   }
   deriving (Eq, Show)
 
+data ExtraMigration
+  = StakeDistrEnded
+  | PruneTxOutFlagPreviouslySet
+  deriving (Eq, Show, Read)
+
+isStakeDistrComplete :: [ExtraMigration] -> Bool
+isStakeDistrComplete = elem StakeDistrEnded
+
+wasPruneTxOutPreviouslySet :: [ExtraMigration] -> Bool
+wasPruneTxOutPreviouslySet = elem PruneTxOutFlagPreviouslySet
+
+data PruneConsumeMigration = PruneConsumeMigration
+  { pcmConsume :: Bool
+  , pcmPruneTxOut :: Bool
+  , -- we make the assumption that if the user is using prune flag
+    -- they will also want consume automatically set for them.
+    pcmConsumeOrPruneTxOut :: Bool
+  }
+  deriving (Show)
+
+extraDescription :: ExtraMigration -> Text
+extraDescription = \case
+  StakeDistrEnded ->
+    "The epoch_stake table has been migrated. It is now populated earlier during the previous era. \
+    \Also the epoch_stake_progress table is introduced."
+  PruneTxOutFlagPreviouslySet ->
+    "The --prune-tx-out flag has previously been enabled, now db-sync can't be run without the flag enabled"
+
 instance Ord PoolCert where
   compare a b = compare (pcCertNo a) (pcCertNo b)
+
+-- | The vote url wrapper so we have some additional safety.
+newtype VoteUrl = VoteUrl {unVoteUrl :: Text}
+  deriving (Eq, Ord, Generic)
+  deriving (Show) via (Quiet VoteUrl)
+
+data Vote = VoteYes | VoteNo | VoteAbstain
+  deriving (Eq, Ord, Generic)
+  deriving (Show) via (Quiet Vote)
+
+data VoterRole = ConstitutionalCommittee | DRep | SPO
+  deriving (Eq, Ord, Generic)
+  deriving (Show) via (Quiet VoterRole)
+
+data GovActionType
+  = ParameterChange
+  | HardForkInitiation
+  | TreasuryWithdrawals
+  | NoConfidence
+  | NewCommitteeType
+  | NewConstitution
+  | InfoAction
+  deriving (Eq, Ord, Generic)
+  deriving (Show) via (Quiet GovActionType)
 
 deltaCoinToDbInt65 :: DeltaCoin -> DbInt65
 deltaCoinToDbInt65 (DeltaCoin dc) =
@@ -258,6 +331,7 @@ renderScriptType st =
     Timelock -> "timelock"
     PlutusV1 -> "plutusV1"
     PlutusV2 -> "plutusV2"
+    PlutusV3 -> "plutusV3"
 
 readScriptType :: String -> ScriptType
 readScriptType str =
@@ -266,7 +340,60 @@ readScriptType str =
     "timelock" -> Timelock
     "plutusV1" -> PlutusV1
     "plutusV2" -> PlutusV2
+    "plutusV3" -> PlutusV3
     _other -> error $ "readScriptType: Unknown ScriptType " ++ str
+
+renderVote :: Vote -> Text
+renderVote ss =
+  case ss of
+    VoteYes -> "Yes"
+    VoteNo -> "No"
+    VoteAbstain -> "Abstain"
+
+readVote :: String -> Vote
+readVote str =
+  case str of
+    "Yes" -> VoteYes
+    "No" -> VoteNo
+    "Abstain" -> VoteAbstain
+    _other -> error $ "readVote: Unknown Vote " ++ str
+
+renderVoterRole :: VoterRole -> Text
+renderVoterRole ss =
+  case ss of
+    ConstitutionalCommittee -> "ConstitutionalCommittee"
+    DRep -> "DRep"
+    SPO -> "SPO"
+
+readVoterRole :: String -> VoterRole
+readVoterRole str =
+  case str of
+    "ConstitutionalCommittee" -> ConstitutionalCommittee
+    "DRep" -> DRep
+    "SPO" -> SPO
+    _other -> error $ "readVoterRole: Unknown VoterRole " ++ str
+
+renderGovActionType :: GovActionType -> Text
+renderGovActionType gav =
+  case gav of
+    ParameterChange -> "ParameterChange"
+    HardForkInitiation -> "HardForkInitiation"
+    TreasuryWithdrawals -> "TreasuryWithdrawals"
+    NoConfidence -> "NoConfidence"
+    NewCommitteeType -> "NewCommittee"
+    NewConstitution -> "NewConstitution"
+    InfoAction -> "InfoAction"
+
+readGovActionType :: String -> GovActionType
+readGovActionType str =
+  case str of
+    "ParameterChange" -> ParameterChange
+    "HardForkInitiation" -> HardForkInitiation
+    "TreasuryWithdrawals" -> TreasuryWithdrawals
+    "NoConfidence" -> NoConfidence
+    "NewCommittee" -> NewCommitteeType
+    "NewConstitution" -> NewConstitution
+    _other -> error $ "readGovActionType: Unknown GovActionType " ++ str
 
 word64ToAda :: Word64 -> Ada
 word64ToAda w =

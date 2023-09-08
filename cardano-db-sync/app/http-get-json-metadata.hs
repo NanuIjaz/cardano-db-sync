@@ -6,11 +6,10 @@ import Cardano.DbSync (
   SimplifiedPoolOfflineData (..),
   httpGetPoolOfflineData,
   parsePoolUrl,
-  renderFetchError,
  )
+import Cardano.DbSync.Error (runOrThrowIO)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Except (ExceptT)
-import Control.Monad.Trans.Except.Exit (orDie)
+import Control.Monad.Trans.Except (ExceptT, runExceptT)
 import qualified Data.ByteString.Base16 as Base16
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Text as Text
@@ -60,7 +59,7 @@ usageExit = do
 
 runHttpGet :: PoolUrl -> Maybe PoolMetaHash -> IO ()
 runHttpGet poolUrl mHash =
-  reportSuccess =<< orDie renderFetchError httpGet
+  reportSuccess =<< runOrThrowIO (runExceptT httpGet)
   where
     httpGet :: ExceptT FetchError IO SimplifiedPoolOfflineData
     httpGet = do

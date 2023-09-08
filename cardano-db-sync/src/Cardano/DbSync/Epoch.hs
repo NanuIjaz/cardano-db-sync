@@ -57,7 +57,7 @@ epochHandler syncEnv trce cache isNewEpochEvent (BlockDetails cblk details) =
     BlockMary {} -> epochSlotTimecheck
     BlockAlonzo {} -> epochSlotTimecheck
     BlockBabbage {} -> epochSlotTimecheck
-    BlockConway {} -> panic "TODO: Conway not supported yet"
+    BlockConway {} -> epochSlotTimecheck
   where
     -- What we do here is completely independent of Shelley/Allegra/Mary eras.
     epochSlotTimecheck :: ReaderT SqlBackend (LoggingT IO) (Either SyncNodeError ())
@@ -227,7 +227,7 @@ handleEpochCachingWhenSyncing syncEnv cache newestEpochFromMap epochBlockDiffCac
       newEpoch <- DB.queryCalcEpochEntry $ ebdEpochNo currentEpC
       writeToMapEpochCache syncEnv cache newEpoch
     -- There will always be a EpochBlockDiff at this point in time
-    (_, _) -> pure $ Left $ NEError "handleEpochCachingWhenSyncing: No caches available to update cache"
+    (_, _) -> pure $ Left $ SNErrDefault "handleEpochCachingWhenSyncing: No caches available to update cache"
 
 -----------------------------------------------------------------------------------------------------
 -- Helper functions

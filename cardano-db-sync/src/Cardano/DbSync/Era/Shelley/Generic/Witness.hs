@@ -8,6 +8,8 @@ module Cardano.DbSync.Era.Shelley.Generic.Witness (
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Alonzo (AlonzoEra)
 import Cardano.Ledger.Babbage (BabbageEra)
+
+-- import Cardano.Ledger.Conway (ConwayEra)
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import Ouroboros.Consensus.Cardano.Block (StandardCrypto)
@@ -35,9 +37,13 @@ data Witness era where
   Alonzo :: Evidence c -> Witness (AlonzoEra c)
   Babbage :: Evidence c -> Witness (BabbageEra c)
 
+--  Conway :: Evidence c -> Witness (ConwayEra c)
+
 instance Show (Witness e) where
   show (Shelley c) = "Shelley " ++ show c
   show (Allegra c) = "Allegra " ++ show c
   show (Mary c) = "Mary " ++ show c
   show (Alonzo c) = "Alonzo " ++ show c
   show (Babbage c) = "Babbage " ++ show c
+
+--  show (Conway c) = "Conway " ++ show c

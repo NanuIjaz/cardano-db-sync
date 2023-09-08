@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -12,16 +13,13 @@ module Cardano.Db.PGConfig (
   readPGPassFileEnv,
   readPGPassFile,
   readPGPassFileExit,
-  renderPGPassError,
   toConnectionString,
 ) where
 
-import Cardano.Db.Text
 import Control.Exception (IOException)
 import qualified Control.Exception as Exception
 import Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
-import Data.Text (Text)
 import qualified Data.Text as Text
 import Database.Persist.Postgresql (ConnectionString)
 import System.Environment (lookupEnv, setEnv)
@@ -31,6 +29,7 @@ data PGPassSource
   = PGPassDefaultEnv
   | PGPassEnv String
   | PGPassCached PGConfig
+  deriving (Show)
 
 -- | PGConfig as specified by https://www.postgresql.org/docs/11/libpq-pgpass.html
 -- However, this module expects the config data to be on the first line.
@@ -132,24 +131,26 @@ data PGPassError
   | FailedToReadPGPassFile FilePath IOException
   | FailedToParsePGPassConfig ByteString
 
-renderPGPassError :: PGPassError -> Text
-renderPGPassError pge =
-  case pge of
-    EnvVarableNotSet str ->
-      mconcat ["Environment variable '", Text.pack str, " not set."]
-    UserFailed err ->
-      mconcat
-        [ "readPGPassFile: User in pgpass file was specified as '*' but "
-        , "getEffectiveUserName failed with "
-        , textShow err
-        ]
-    FailedToReadPGPassFile fpath err ->
-      mconcat
-        [ "Not able to read PGPassFile at "
-        , textShow fpath
-        , "."
-        , "Failed with "
-        , textShow err
-        ]
-    FailedToParsePGPassConfig bs ->
-      "Failed to parse config from " <> textShow bs
+instance Exception.Exception PGPassError
+
+instance Show PGPassError where
+  show =
+    \case
+      EnvVarableNotSet str ->
+        mconcat ["Environment variable '", show str, " not set."]
+      UserFailed err ->
+        mconcat
+          [ "readPGPassFile: User in pgpass file was specified as '*' but "
+          , "getEffectiveUserName failed with "
+          , show err
+          ]
+      FailedToReadPGPassFile fpath err ->
+        mconcat
+          [ "Not able to read PGPassFile at "
+          , show $ Text.pack fpath
+          , "."
+          , "Failed with "
+          , show err
+          ]
+      FailedToParsePGPassConfig bs ->
+        "Failed to parse config from " <> show bs

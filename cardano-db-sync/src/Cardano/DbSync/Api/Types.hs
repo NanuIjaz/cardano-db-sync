@@ -10,7 +10,6 @@ module Cardano.DbSync.Api.Types (
   RunMigration,
   FixesRan (..),
   ConsistentLevel (..),
-  ExtraMigrations (..),
   EpochState (..),
 ) where
 
@@ -34,23 +33,23 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types (SystemStart (..))
 import Ouroboros.Network.Magic (NetworkMagic (..))
 
 data SyncEnv = SyncEnv
-  { envProtocol :: !SyncProtocol
-  , envNetworkMagic :: !NetworkMagic
-  , envSystemStart :: !SystemStart
-  , envConnString :: ConnectionString
-  , envRunDelayedMigration :: RunMigration
-  , envBackend :: !SqlBackend
-  , envConsistentLevel :: !(StrictTVar IO ConsistentLevel)
-  , envIsFixed :: !(StrictTVar IO FixesRan)
-  , envIndexes :: !(StrictTVar IO Bool)
-  , envOptions :: !SyncOptions
+  { envBackend :: !SqlBackend
   , envCache :: !Cache
-  , envExtraMigrations :: !(StrictTVar IO ExtraMigrations)
-  , envOfflineWorkQueue :: !(StrictTBQueue IO PoolFetchRetry)
-  , envOfflineResultQueue :: !(StrictTBQueue IO FetchResult)
+  , envConnString :: ConnectionString
+  , envConsistentLevel :: !(StrictTVar IO ConsistentLevel)
   , envEpochState :: !(StrictTVar IO EpochState)
   , envEpochSyncTime :: !(StrictTVar IO UTCTime)
+  , envIndexes :: !(StrictTVar IO Bool)
+  , envIsFixed :: !(StrictTVar IO FixesRan)
   , envLedgerEnv :: !LedgerEnv
+  , envNetworkMagic :: !NetworkMagic
+  , envOfflineResultQueue :: !(StrictTBQueue IO FetchResult)
+  , envOfflineWorkQueue :: !(StrictTBQueue IO PoolFetchRetry)
+  , envOptions :: !SyncOptions
+  , envProtocol :: !SyncProtocol
+  , envPruneConsumeMigration :: !(StrictTVar IO DB.PruneConsumeMigration)
+  , envRunDelayedMigration :: RunMigration
+  , envSystemStart :: !SystemStart
   }
 
 data SyncOptions = SyncOptions
@@ -82,13 +81,6 @@ data FixesRan = NoneFixRan | DataFixRan | AllFixRan
 
 data ConsistentLevel = Consistent | DBAheadOfLedger | Unchecked
   deriving (Show, Eq)
-
-data ExtraMigrations = ExtraMigrations
-  { emRan :: Bool
-  , emConsume :: Bool
-  , emPrune :: Bool
-  }
-  deriving (Show)
 
 data EpochState = EpochState
   { esInitialized :: !Bool

@@ -1,12 +1,10 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE NoImplicitPrelude #-}
--- Need this because both ghc-8.6.5 and ghc-8.10.2 incorrectly warns about a redundant constraint
--- in the definition of renderAddress.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Cardano.DbSync.Era.Shelley.Generic.Util (
   annotateStakingCred,
@@ -22,22 +20,30 @@ module Cardano.DbSync.Era.Shelley.Generic.Util (
   renderRewardAcnt,
   stakingCredHash,
   unitIntervalToDouble,
+  unCredentialHash,
   unKeyHashRaw,
   unKeyHashView,
   unScriptHash,
   unTxHash,
   unAssetName,
   dataHashToBytes,
+  achorHashToBytes,
+  toGovAction,
+  toVote,
+  toVoterRole,
 ) where
 
-import qualified Cardano.Api.Shelley as Api
 import qualified Cardano.Crypto.Hash as Crypto
 import Cardano.Db (DbLovelace (..))
 import qualified Cardano.Db as Db
 import Cardano.DbSync.Types
+import Cardano.DbSync.Util.Address (serialiseAddress, serialiseRewardAcnt)
+import Cardano.DbSync.Util.Bech32 (serialiseStakePoolKeyHashToBech32)
 import qualified Cardano.Ledger.Address as Ledger
 import qualified Cardano.Ledger.BaseTypes as Ledger
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin)
+import Cardano.Ledger.Conway.Governance
+import qualified Cardano.Ledger.Conway.Governance as Ledger
 import qualified Cardano.Ledger.Credential as Ledger
 import qualified Cardano.Ledger.Keys as Ledger
 import Cardano.Ledger.Mary.Value (AssetName (..))
@@ -53,7 +59,7 @@ import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified Data.ByteString.Short as SBS
 import qualified Data.List as List
 import qualified Data.Text.Encoding as Text
-import Ouroboros.Consensus.Cardano.Block (StandardCrypto)
+import Ouroboros.Consensus.Cardano.Block (StandardConway, StandardCrypto)
 
 annotateStakingCred :: Ledger.Network -> Ledger.StakeCredential era -> Ledger.RewardAcnt era
 annotateStakingCred = Shelley.RewardAcnt
@@ -117,10 +123,10 @@ partitionMIRTargets =
         Shelley.SendToOppositePotMIR y -> (xs, y : ys)
 
 renderAddress :: Ledger.Addr StandardCrypto -> Text
-renderAddress = Api.serialiseAddress . Api.fromShelleyAddrToAny
+renderAddress = serialiseAddress
 
 renderRewardAcnt :: Ledger.RewardAcnt StandardCrypto -> Text
-renderRewardAcnt = Api.serialiseAddress . Api.fromShelleyStakeAddr
+renderRewardAcnt = serialiseRewardAcnt
 
 stakingCredHash :: Ledger.Network -> Ledger.StakeCredential era -> ByteString
 stakingCredHash network = Ledger.serialiseRewardAcnt . annotateStakingCred network
@@ -128,11 +134,16 @@ stakingCredHash network = Ledger.serialiseRewardAcnt . annotateStakingCred netwo
 unitIntervalToDouble :: Ledger.UnitInterval -> Double
 unitIntervalToDouble = fromRational . Ledger.unboundRational
 
+unCredentialHash :: Ledger.Credential kr StandardCrypto -> ByteString
+unCredentialHash = \case
+  Ledger.ScriptHashObj scriptHash -> unScriptHash scriptHash
+  Ledger.KeyHashObj keyHash -> unKeyHashRaw keyHash
+
 unKeyHashRaw :: Ledger.KeyHash d era -> ByteString
 unKeyHashRaw (Ledger.KeyHash kh) = Crypto.hashToBytes kh
 
 unKeyHashView :: Ledger.KeyHash 'Ledger.StakePool StandardCrypto -> Text
-unKeyHashView = Api.serialiseToBech32 . Api.StakePoolKeyHash
+unKeyHashView = serialiseStakePoolKeyHashToBech32
 
 unScriptHash :: Shelley.ScriptHash StandardCrypto -> ByteString
 unScriptHash (Shelley.ScriptHash h) = Crypto.hashToBytes h
@@ -144,4 +155,29 @@ unAssetName :: AssetName -> ByteString
 unAssetName = SBS.fromShort . assetName
 
 dataHashToBytes :: DataHash -> ByteString
-dataHashToBytes dataHash = Crypto.hashToBytes (Ledger.extractHash dataHash)
+dataHashToBytes = Crypto.hashToBytes . Ledger.extractHash
+
+achorHashToBytes :: Ledger.SafeHash StandardCrypto Ledger.AnchorDataHash -> ByteString
+achorHashToBytes = Crypto.hashToBytes . Ledger.extractHash
+
+toGovAction :: GovernanceAction StandardConway -> Db.GovActionType
+toGovAction = \case
+  ParameterChange {} -> Db.ParameterChange
+  HardForkInitiation {} -> Db.HardForkInitiation
+  TreasuryWithdrawals {} -> Db.TreasuryWithdrawals
+  NoConfidence {} -> Db.NoConfidence
+  NewCommittee {} -> Db.NewCommitteeType
+  NewConstitution {} -> Db.NewConstitution
+  InfoAction {} -> Db.InfoAction
+
+toVote :: Vote -> Db.Vote
+toVote = \case
+  VoteNo -> Db.VoteNo
+  VoteYes -> Db.VoteYes
+  Abstain -> Db.VoteAbstain
+
+toVoterRole :: Voter StandardCrypto -> Db.VoterRole
+toVoterRole = \case
+  CommitteeVoter {} -> Db.ConstitutionalCommittee
+  DRepVoter {} -> Db.DRep
+  StakePoolVoter {} -> Db.SPO

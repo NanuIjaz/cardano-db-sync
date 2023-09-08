@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Cardano.Db.Insert (
   insertAdaPots,
@@ -54,7 +55,21 @@ module Cardano.Db.Insert (
   insertCheckPoolOfflineFetchError,
   insertReservedPoolTicker,
   insertDelistedPool,
+  insertExtraMigration,
+  insertEpochStakeProgress,
+  updateSetComplete,
   replaceAdaPots,
+  insertAnchor,
+  insertGovernanceAction,
+  insertTreasuryWithdrawal,
+  insertNewCommittee,
+  insertVotingProcedure,
+  insertDrepHash,
+  insertDelegationVote,
+  insertCommitteeRegistration,
+  insertCommitteeDeRegistration,
+  insertDrepRegistration,
+  insertDrepDeRegistration,
   insertUnchecked,
   insertMany',
   -- Export mainly for testing.
@@ -63,6 +78,8 @@ module Cardano.Db.Insert (
 
 import Cardano.Db.Query
 import Cardano.Db.Schema
+import Cardano.Db.Text
+import Cardano.Db.Types
 import Control.Exception.Lifted (Exception, handle, throwIO)
 import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -73,6 +90,8 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Word (Word64)
+import Database.Persist (updateWhere, (=.), (==.))
 import Database.Persist.Class (
   AtLeastOneUniqueKey,
   PersistEntity,
@@ -142,7 +161,7 @@ insertDelegation :: (MonadBaseControl IO m, MonadIO m) => Delegation -> ReaderT 
 insertDelegation = insertUnchecked "Delegation"
 
 insertEpoch :: (MonadBaseControl IO m, MonadIO m) => Epoch -> ReaderT SqlBackend m EpochId
-insertEpoch = insertUnchecked "Epoch"
+insertEpoch = insertCheckUnique "Epoch"
 
 insertEpochParam :: (MonadBaseControl IO m, MonadIO m) => EpochParam -> ReaderT SqlBackend m EpochParamId
 insertEpochParam = insertUnchecked "EpochParam"
@@ -280,6 +299,17 @@ insertReservedPoolTicker ticker = do
 insertDelistedPool :: (MonadBaseControl IO m, MonadIO m) => DelistedPool -> ReaderT SqlBackend m DelistedPoolId
 insertDelistedPool = insertCheckUnique "DelistedPool"
 
+insertExtraMigration :: (MonadBaseControl IO m, MonadIO m) => ExtraMigration -> ReaderT SqlBackend m ()
+insertExtraMigration token = void . insert $ ExtraMigrations (textShow token) (Just $ extraDescription token)
+
+insertEpochStakeProgress :: (MonadBaseControl IO m, MonadIO m) => [EpochStakeProgress] -> ReaderT SqlBackend m ()
+insertEpochStakeProgress =
+  insertManyUncheckedUnique "Many EpochStakeProgress"
+
+updateSetComplete :: MonadIO m => Word64 -> ReaderT SqlBackend m ()
+updateSetComplete epoch = do
+  updateWhere [EpochStakeProgressEpochNo ==. epoch] [EpochStakeProgressCompleted =. True]
+
 replaceAdaPots :: (MonadBaseControl IO m, MonadIO m) => BlockId -> AdaPots -> ReaderT SqlBackend m Bool
 replaceAdaPots blockId adapots = do
   mAdaPotsId <- queryAdaPotsId blockId
@@ -291,6 +321,39 @@ replaceAdaPots blockId adapots = do
     Just adaPotsDB -> do
       replace (entityKey adaPotsDB) adapots
       pure True
+
+insertAnchor :: (MonadBaseControl IO m, MonadIO m) => VotingAnchor -> ReaderT SqlBackend m VotingAnchorId
+insertAnchor = insertUnchecked "VotingAnchor"
+
+insertGovernanceAction :: (MonadBaseControl IO m, MonadIO m) => GovernanceAction -> ReaderT SqlBackend m GovernanceActionId
+insertGovernanceAction = insertUnchecked "GovernanceAction"
+
+insertTreasuryWithdrawal :: (MonadBaseControl IO m, MonadIO m) => TreasuryWithdrawal -> ReaderT SqlBackend m TreasuryWithdrawalId
+insertTreasuryWithdrawal = insertUnchecked "TreasuryWithdrawal"
+
+insertNewCommittee :: (MonadBaseControl IO m, MonadIO m) => NewCommittee -> ReaderT SqlBackend m NewCommitteeId
+insertNewCommittee = insertUnchecked "NewCommittee"
+
+insertVotingProcedure :: (MonadBaseControl IO m, MonadIO m) => VotingProcedure -> ReaderT SqlBackend m VotingProcedureId
+insertVotingProcedure = insertUnchecked "VotingProcedure"
+
+insertDrepHash :: (MonadBaseControl IO m, MonadIO m) => DrepHash -> ReaderT SqlBackend m DrepHashId
+insertDrepHash = insertCheckUnique "DrepHash"
+
+insertDelegationVote :: (MonadBaseControl IO m, MonadIO m) => DelegationVote -> ReaderT SqlBackend m DelegationVoteId
+insertDelegationVote = insertUnchecked "DelegationVote"
+
+insertCommitteeRegistration :: (MonadBaseControl IO m, MonadIO m) => CommitteeRegistration -> ReaderT SqlBackend m CommitteeRegistrationId
+insertCommitteeRegistration = insertUnchecked "CommitteeRegistration"
+
+insertCommitteeDeRegistration :: (MonadBaseControl IO m, MonadIO m) => CommitteeDeRegistration -> ReaderT SqlBackend m CommitteeDeRegistrationId
+insertCommitteeDeRegistration = insertUnchecked "CommitteeDeRegistration"
+
+insertDrepRegistration :: (MonadBaseControl IO m, MonadIO m) => DrepRegistration -> ReaderT SqlBackend m DrepRegistrationId
+insertDrepRegistration = insertUnchecked "DrepRegistration"
+
+insertDrepDeRegistration :: (MonadBaseControl IO m, MonadIO m) => DrepDeRegistration -> ReaderT SqlBackend m DrepDeRegistrationId
+insertDrepDeRegistration = insertUnchecked "DrepDeRegistration"
 
 -- -----------------------------------------------------------------------------
 

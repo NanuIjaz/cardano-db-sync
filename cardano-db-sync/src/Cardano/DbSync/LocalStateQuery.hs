@@ -11,7 +11,7 @@ module Cardano.DbSync.LocalStateQuery (
 ) where
 
 import Cardano.BM.Trace (Trace, logInfo)
-import Cardano.Db (textShow)
+import Cardano.DbSync.Error (SyncNodeError (..))
 import Cardano.DbSync.StateQuery
 import Cardano.DbSync.Types
 import qualified Cardano.Ledger.BaseTypes as Ledger
@@ -61,7 +61,7 @@ data NoLedgerEnv = NoLedgerEnv
   , nleQueryVar :: StateQueryTMVar CardanoBlock CardanoInterpreter
   , nleHistoryInterpreterVar :: StrictTVar IO (Strict.Maybe CardanoInterpreter)
   , nleNetwork :: !Ledger.Network
-  , nleProtocolInfo :: !(Consensus.ProtocolInfo IO CardanoBlock)
+  , nleProtocolInfo :: !(Consensus.ProtocolInfo CardanoBlock)
   }
 
 newtype StateQueryTMVar blk result = StateQueryTMVar
@@ -73,7 +73,7 @@ newtype StateQueryTMVar blk result = StateQueryTMVar
         )
   }
 
-mkNoLedgerEnv :: Trace IO Text -> Consensus.ProtocolInfo IO CardanoBlock -> Ledger.Network -> SystemStart -> IO NoLedgerEnv
+mkNoLedgerEnv :: Trace IO Text -> Consensus.ProtocolInfo CardanoBlock -> Ledger.Network -> SystemStart -> IO NoLedgerEnv
 mkNoLedgerEnv trce protoInfo network systemStart = do
   qVar <- newStateQueryTMVar
   interVar <- newTVarIO Strict.Nothing
@@ -96,7 +96,7 @@ getSlotDetailsNode nlEnv slot = do
     Left _ -> do
       einterp2 <- getHistoryInterpreter nlEnv
       case evalSlotDetails einterp2 of
-        Left err -> panic $ "getSlotDetailsNode: " <> textShow err
+        Left err -> throwIO $ SNErrLocalStateQuery $ "getSlotDetailsNode: " <> Prelude.show err
         Right sd -> insertCurrentTime sd
   where
     interVar = nleHistoryInterpreterVar nlEnv
@@ -123,7 +123,7 @@ getHistoryInterpreter nlEnv = do
   res <- atomically $ takeTMVar respVar
   case res of
     Left err ->
-      panic $ "getHistoryInterpreter: " <> textShow err
+      throwIO $ SNErrLocalStateQuery $ "getHistoryInterpreter: " <> Prelude.show err
     Right interp -> do
       logInfo tracer "getHistoryInterpreter: acquired"
       atomically $ writeTVar interVar $ Strict.Just interp

@@ -1,7 +1,7 @@
 cabal-version:          3.0
 
 name:                   cardano-db-sync
-version:                13.1.1.2
+version:                13.1.1.3
 synopsis:               The Cardano DB Sync node
 description:            A Cardano node that follows the Cardano chain and inserts data from the
                         chain into a PostgresQL database.
@@ -67,6 +67,8 @@ library
                         Cardano.DbSync.Era.Shelley.Generic.EpochUpdate
                         Cardano.DbSync.Era.Shelley.Generic.ProtoParams
                         Cardano.DbSync.Era.Shelley.Generic.Rewards
+                        Cardano.DbSync.Era.Shelley.Generic.Script
+                        Cardano.DbSync.Era.Shelley.Generic.ScriptData
                         Cardano.DbSync.Era.Shelley.Generic.StakeDist
                         Cardano.DbSync.Era.Shelley.Generic.Metadata
                         Cardano.DbSync.Era.Shelley.Generic.ParamProposal
@@ -74,6 +76,7 @@ library
                         Cardano.DbSync.Era.Shelley.Generic.Tx.Allegra
                         Cardano.DbSync.Era.Shelley.Generic.Tx.Alonzo
                         Cardano.DbSync.Era.Shelley.Generic.Tx.Babbage
+                        Cardano.DbSync.Era.Shelley.Generic.Tx.Conway
                         Cardano.DbSync.Era.Shelley.Generic.Tx.Mary
                         Cardano.DbSync.Era.Shelley.Generic.Tx.Shelley
                         Cardano.DbSync.Era.Shelley.Generic.Tx.Types
@@ -111,6 +114,7 @@ library
 
                         Cardano.DbSync.Rollback
 
+                        Cardano.DbSync.Fix.EpochStake
                         Cardano.DbSync.Fix.PlutusDataBytes
                         Cardano.DbSync.Fix.PlutusScripts
                         Cardano.DbSync.LocalStateQuery
@@ -118,18 +122,23 @@ library
                         Cardano.DbSync.Sync
                         Cardano.DbSync.Tracing.ToObjectOrphans
                         Cardano.DbSync.Types
+
                         Cardano.DbSync.Util
+                        Cardano.DbSync.Util.Address
+                        Cardano.DbSync.Util.Bech32
+                        Cardano.DbSync.Util.Cbor
 
                         Paths_cardano_db_sync
 
-  build-depends:        base                            >= 4.14         && < 4.17
+  build-depends:        base                            >= 4.14         && < 5
                       , aeson
                       , async
+                      , bech32
                       , binary
                       , bytestring
                       , base16-bytestring
+                      , base58-bytestring
                       , case-insensitive
-                      , cardano-api
                       , cardano-binary
                       , cardano-client
                       , cardano-crypto
@@ -140,6 +149,7 @@ library
                       , cardano-ledger-allegra
                       , cardano-ledger-alonzo
                       , cardano-ledger-babbage
+                      , cardano-ledger-binary
                       , cardano-ledger-byron
                       , cardano-ledger-core
                       , cardano-ledger-conway
@@ -150,6 +160,7 @@ library
                       , cardano-prelude
                       , cardano-protocol-tpraos
                       , cardano-slotting
+                      , cardano-strict-containers
                       , cborg
                       , vector-map
                       , containers
@@ -169,7 +180,6 @@ library
                       , microlens
                       , monad-control
                       , monad-logger
-                      , mtl
                       , network-mux
                       , ouroboros-consensus
                       , ouroboros-consensus-cardano
@@ -181,10 +191,13 @@ library
                       , ouroboros-network-protocols
                       , persistent
                       , persistent-postgresql
+                      , plutus-ledger-api
                       , pretty-show
                       , prometheus
                       , psqueues
                       , random-shuffle
+                      , scientific
+                      , serialise
                       , small-steps
                       , stm
                       , strict
@@ -225,7 +238,7 @@ executable cardano-db-sync
   other-modules:        Paths_cardano_db_sync
                         MigrationValidations
 
-  build-depends:        base                            >= 4.14         && < 4.17
+  build-depends:        base
                       , cardano-db
                       , cardano-db-sync
                       , cardano-prelude
@@ -263,7 +276,6 @@ executable http-get-json-metadata
                       , http-client-tls
                       , text
                       , transformers
-                      , transformers-except
 
 executable test-http-get-json-metadata
   default-language:     Haskell2010
@@ -296,3 +308,47 @@ executable test-http-get-json-metadata
                       , text
                       , transformers
                       , transformers-except
+
+test-suite test
+  default-language:     Haskell2010
+  type:                 exitcode-stdio-1.0
+  main-is:              Main.hs
+  hs-source-dirs:       test
+
+  ghc-options:          -Wall
+                        -Werror
+                        -Wcompat
+                        -Wredundant-constraints
+                        -Wincomplete-patterns
+                        -Wincomplete-record-updates
+                        -Wincomplete-uni-patterns
+                        -Wunused-imports
+                        -Wunused-packages
+
+  other-modules:        Cardano.DbSync.Era.Shelley.Generic.ScriptDataTest
+                        Cardano.DbSync.Era.Shelley.Generic.ScriptTest
+                        Cardano.DbSync.Util.AddressTest
+                        Cardano.DbSync.Util.Bech32Test
+                        Cardano.DbSync.Util.CborTest
+
+  build-depends:        base
+                      , aeson
+                      , base16-bytestring
+                      , bytestring
+                      , cardano-binary
+                      , cardano-crypto-class
+                      , cardano-crypto-praos
+                      , cardano-ledger-api
+                      , cardano-ledger-binary
+                      , cardano-ledger-core:testlib
+                      , cardano-ledger-allegra:{cardano-ledger-allegra,testlib}
+                      , cardano-ledger-alonzo:{cardano-ledger-alonzo,testlib}
+                      , cardano-ledger-shelley:{cardano-ledger-shelley,testlib}
+                      , cardano-db-sync
+                      , cardano-ledger-core
+                      , cardano-prelude
+                      , cardano-strict-containers
+                      , containers
+                      , hedgehog
+                      , hedgehog-quickcheck
+                      , text

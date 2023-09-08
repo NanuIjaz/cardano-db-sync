@@ -24,9 +24,9 @@ module Cardano.DbSync.Api (
   runExtraMigrationsMaybe,
   getSafeBlockNoDiff,
   getPruneInterval,
-  whenConsumeTxOut,
+  whenConsumeOrPruneTxOut,
   whenPruneTxOut,
-  getHasConsumed,
+  getHasConsumedOrPruneTxOut,
   getPrunes,
   mkSyncEnvFromConfig,
   verifySnapshotPoint,
@@ -140,26 +140,23 @@ runIndexMigrations env = do
     logInfo (getTrace env) "Indexes were created"
     atomically $ writeTVar (envIndexes env) True
 
-initExtraMigrations :: Bool -> Bool -> ExtraMigrations
-initExtraMigrations cons prne =
-  ExtraMigrations
-    { emRan = False
-    , emConsume = cons || prne
-    , emPrune = prne
+initPruneConsumeMigration :: Bool -> Bool -> DB.PruneConsumeMigration
+initPruneConsumeMigration consumed pruneTxOut =
+  DB.PruneConsumeMigration
+    { DB.pcmConsume = consumed
+    , DB.pcmPruneTxOut = pruneTxOut
+    , DB.pcmConsumeOrPruneTxOut = consumed || pruneTxOut
     }
 
 runExtraMigrationsMaybe :: SyncEnv -> IO ()
-runExtraMigrationsMaybe env = do
-  extraMigr <- liftIO $ readTVarIO $ envExtraMigrations env
-  logInfo (getTrace env) $ textShow extraMigr
-  unless (emRan extraMigr) $ do
-    DB.runDbIohkNoLogging (envBackend env) $
-      DB.runExtraMigrations
-        (getTrace env)
-        (getSafeBlockNoDiff env)
-        (emConsume extraMigr)
-        (emPrune extraMigr)
-  liftIO $ atomically $ writeTVar (envExtraMigrations env) (extraMigr {emRan = True})
+runExtraMigrationsMaybe syncEnv = do
+  pcm <- liftIO $ readTVarIO $ envPruneConsumeMigration syncEnv
+  logInfo (getTrace syncEnv) $ textShow pcm
+  DB.runDbIohkNoLogging (envBackend syncEnv) $
+    DB.runExtraMigrations
+      (getTrace syncEnv)
+      (getSafeBlockNoDiff syncEnv)
+      pcm
 
 getSafeBlockNoDiff :: SyncEnv -> Word64
 getSafeBlockNoDiff syncEnv = 2 * getSecurityParam syncEnv
@@ -167,25 +164,25 @@ getSafeBlockNoDiff syncEnv = 2 * getSecurityParam syncEnv
 getPruneInterval :: SyncEnv -> Word64
 getPruneInterval syncEnv = 10 * getSecurityParam syncEnv
 
-whenConsumeTxOut :: MonadIO m => SyncEnv -> m () -> m ()
-whenConsumeTxOut env action = do
-  extraMigr <- liftIO $ readTVarIO $ envExtraMigrations env
-  when (emConsume extraMigr) action
+whenConsumeOrPruneTxOut :: MonadIO m => SyncEnv -> m () -> m ()
+whenConsumeOrPruneTxOut env action = do
+  extraMigr <- liftIO $ readTVarIO $ envPruneConsumeMigration env
+  when (DB.pcmConsumeOrPruneTxOut extraMigr) action
 
 whenPruneTxOut :: MonadIO m => SyncEnv -> m () -> m ()
 whenPruneTxOut env action = do
-  extraMigr <- liftIO $ readTVarIO $ envExtraMigrations env
-  when (emPrune extraMigr) action
+  extraMigr <- liftIO $ readTVarIO $ envPruneConsumeMigration env
+  when (DB.pcmPruneTxOut extraMigr) action
 
-getHasConsumed :: SyncEnv -> IO Bool
-getHasConsumed env = do
-  extraMigr <- liftIO $ readTVarIO $ envExtraMigrations env
-  pure $ emConsume extraMigr
+getHasConsumedOrPruneTxOut :: SyncEnv -> IO Bool
+getHasConsumedOrPruneTxOut env = do
+  extraMigr <- liftIO $ readTVarIO $ envPruneConsumeMigration env
+  pure $ DB.pcmConsumeOrPruneTxOut extraMigr
 
 getPrunes :: SyncEnv -> IO Bool
 getPrunes env = do
-  extraMigr <- liftIO $ readTVarIO $ envExtraMigrations env
-  pure $ emPrune extraMigr
+  extraMigr <- liftIO $ readTVarIO $ envPruneConsumeMigration env
+  pure $ DB.pcmPruneTxOut extraMigr
 
 fullInsertOptions :: InsertOptions
 fullInsertOptions = InsertOptions True True True True
@@ -308,7 +305,7 @@ mkSyncEnv ::
   ConnectionString ->
   SqlBackend ->
   SyncOptions ->
-  ProtocolInfo IO CardanoBlock ->
+  ProtocolInfo CardanoBlock ->
   Ledger.Network ->
   NetworkMagic ->
   SystemStart ->
@@ -321,7 +318,7 @@ mkSyncEnv trce connString backend syncOptions protoInfo nw nwMagic systemStart s
   consistentLevelVar <- newTVarIO Unchecked
   fixDataVar <- newTVarIO $ if ranMigrations then DataFixRan else NoneFixRan
   indexesVar <- newTVarIO $ enpForceIndexes syncNodeParams
-  extraMigrVar <- newTVarIO $ initExtraMigrations (enpMigrateConsumed syncNodeParams) (enpPruneTxOut syncNodeParams)
+  pcmVar <- newTVarIO $ initPruneConsumeMigration (enpMigrateConsumed syncNodeParams) (enpPruneTxOut syncNodeParams)
   owq <- newTBQueueIO 100
   orq <- newTBQueueIO 100
   epochVar <- newTVarIO initEpochState
@@ -348,23 +345,23 @@ mkSyncEnv trce connString backend syncOptions protoInfo nw nwMagic systemStart s
 
   pure $
     SyncEnv
-      { envProtocol = SyncProtocolCardano
-      , envNetworkMagic = nwMagic
-      , envSystemStart = systemStart
-      , envConnString = connString
-      , envRunDelayedMigration = runMigrationFnc
-      , envBackend = backend
-      , envOptions = syncOptions
-      , envConsistentLevel = consistentLevelVar
-      , envIsFixed = fixDataVar
-      , envIndexes = indexesVar
+      { envBackend = backend
       , envCache = cache
-      , envExtraMigrations = extraMigrVar
-      , envOfflineWorkQueue = owq
-      , envOfflineResultQueue = orq
+      , envConnString = connString
+      , envConsistentLevel = consistentLevelVar
       , envEpochState = epochVar
       , envEpochSyncTime = epochSyncTime
+      , envIndexes = indexesVar
+      , envIsFixed = fixDataVar
       , envLedgerEnv = ledgerEnvType
+      , envNetworkMagic = nwMagic
+      , envOfflineResultQueue = orq
+      , envOfflineWorkQueue = owq
+      , envOptions = syncOptions
+      , envProtocol = SyncProtocolCardano
+      , envPruneConsumeMigration = pcmVar
+      , envRunDelayedMigration = runMigrationFnc
+      , envSystemStart = systemStart
       }
 
 mkSyncEnvFromConfig ::
@@ -383,7 +380,7 @@ mkSyncEnvFromConfig trce connString backend syncOptions genCfg syncNodeParams ra
   case genCfg of
     GenesisCardano _ bCfg sCfg _
       | unProtocolMagicId (Byron.configProtocolMagicId bCfg) /= Shelley.sgNetworkMagic (scConfig sCfg) ->
-          pure . Left . NECardanoConfig $
+          pure . Left . SNErrCardanoConfig $
             mconcat
               [ "ProtocolMagicId "
               , DB.textShow (unProtocolMagicId $ Byron.configProtocolMagicId bCfg)
@@ -391,7 +388,7 @@ mkSyncEnvFromConfig trce connString backend syncOptions genCfg syncNodeParams ra
               , DB.textShow (Shelley.sgNetworkMagic $ scConfig sCfg)
               ]
       | Byron.gdStartTime (Byron.configGenesisData bCfg) /= Shelley.sgSystemStart (scConfig sCfg) ->
-          pure . Left . NECardanoConfig $
+          pure . Left . SNErrCardanoConfig $
             mconcat
               [ "SystemStart "
               , DB.textShow (Byron.gdStartTime $ Byron.configGenesisData bCfg)
@@ -405,7 +402,7 @@ mkSyncEnvFromConfig trce connString backend syncOptions genCfg syncNodeParams ra
               connString
               backend
               syncOptions
-              (mkProtocolInfoCardano genCfg [])
+              (fst $ mkProtocolInfoCardano genCfg [])
               (Shelley.sgNetworkId $ scConfig sCfg)
               (NetworkMagic . unProtocolMagicId $ Byron.configProtocolMagicId bCfg)
               (SystemStart . Byron.gdStartTime $ Byron.configGenesisData bCfg)
@@ -467,6 +464,6 @@ getSecurityParam syncEnv =
 
 getMaxRollbacks ::
   ConsensusProtocol (BlockProtocol blk) =>
-  ProtocolInfo IO blk ->
+  ProtocolInfo blk ->
   Word64
 getMaxRollbacks = maxRollbacks . configSecurityParam . pInfoConfig

@@ -240,7 +240,7 @@ insertByronTx ::
   ExceptT SyncNodeError (ReaderT SqlBackend m) Word64
 insertByronTx syncEnv blkId tx blockIndex = do
   resolvedInputs <- mapM resolveTxInputs (toList $ Byron.txInputs (Byron.taTx tx))
-  hasConsumed <- liftIO $ getHasConsumed syncEnv
+  hasConsumed <- liftIO $ getHasConsumedOrPruneTxOut syncEnv
   valFee <- firstExceptT annotateTx $ ExceptT $ pure (calculateTxFee (Byron.taTx tx) resolvedInputs)
   txId <-
     lift . DB.insertTx $
@@ -250,7 +250,7 @@ insertByronTx syncEnv blkId tx blockIndex = do
         , DB.txBlockIndex = blockIndex
         , DB.txOutSum = vfValue valFee
         , DB.txFee = vfFee valFee
-        , DB.txDeposit = 0 -- Byron does not have deposits/refunds
+        , DB.txDeposit = Just 0 -- Byron does not have deposits/refunds
         -- Would be really nice to have a way to get the transaction size
         -- without re-serializing it.
         , DB.txSize = fromIntegral $ BS.length (serialize' $ Byron.taTx tx)
@@ -264,7 +264,7 @@ insertByronTx syncEnv blkId tx blockIndex = do
   -- references the output (not sure this can even happen).
   lift $ zipWithM_ (insertTxOut tracer hasConsumed txId) [0 ..] (toList . Byron.txOutputs $ Byron.taTx tx)
   txInIds <- mapM (insertTxIn tracer txId) resolvedInputs
-  whenConsumeTxOut syncEnv $
+  whenConsumeOrPruneTxOut syncEnv $
     lift $
       DB.updateListTxOutConsumedByTxInId $
         zip (thrd3 <$> resolvedInputs) txInIds
@@ -277,7 +277,7 @@ insertByronTx syncEnv blkId tx blockIndex = do
     annotateTx :: SyncNodeError -> SyncNodeError
     annotateTx ee =
       case ee of
-        NEInvariant loc ei -> NEInvariant loc (annotateInvariantTx (Byron.taTx tx) ei)
+        SNErrInvariant loc ei -> SNErrInvariant loc (annotateInvariantTx (Byron.taTx tx) ei)
         _other -> ee
 
 insertTxOut ::
@@ -323,7 +323,7 @@ insertTxIn _tracer txInId (Byron.TxInUtxo _txHash inIndex, txOutTxId, _, _) = do
 
 resolveTxInputs :: MonadIO m => Byron.TxIn -> ExceptT SyncNodeError (ReaderT SqlBackend m) (Byron.TxIn, DB.TxId, DB.TxOutId, DbLovelace)
 resolveTxInputs txIn@(Byron.TxInUtxo txHash index) = do
-  res <- liftLookupFail "resolveInput" $ DB.queryTxOutValue2 (Byron.unTxHash txHash, fromIntegral index)
+  res <- liftLookupFail "resolveInput" $ DB.queryTxOutIdValue (Byron.unTxHash txHash, fromIntegral index)
   pure $ convert res
   where
     convert :: (DB.TxId, DB.TxOutId, DbLovelace) -> (Byron.TxIn, DB.TxId, DB.TxOutId, DbLovelace)
@@ -331,13 +331,13 @@ resolveTxInputs txIn@(Byron.TxInUtxo txHash index) = do
 
 calculateTxFee :: Byron.Tx -> [(Byron.TxIn, DB.TxId, DB.TxOutId, DbLovelace)] -> Either SyncNodeError ValueFee
 calculateTxFee tx resolvedInputs = do
-  outval <- first (\e -> NEError $ "calculateTxFee: " <> textShow e) output
+  outval <- first (\e -> SNErrDefault $ "calculateTxFee: " <> textShow e) output
   when (null resolvedInputs) $
     Left $
-      NEError "calculateTxFee: List of transaction inputs is zero."
+      SNErrDefault "calculateTxFee: List of transaction inputs is zero."
   let inval = sum $ map (unDbLovelace . forth4) resolvedInputs
   if inval < outval
-    then Left $ NEInvariant "calculateTxFee" $ EInvInOut inval outval
+    then Left $ SNErrInvariant "calculateTxFee" $ EInvInOut inval outval
     else Right $ ValueFee (DbLovelace outval) (DbLovelace $ inval - outval)
   where
     output :: Either Byron.LovelaceError Word64

@@ -1,7 +1,7 @@
 cabal-version:          3.0
 
 name:                   cardano-db-tool
-version:                13.1.1.2
+version:                13.1.1.3
 synopsis:               Utilities to manage the cardano-db-sync databases.
 description:            Utilities and executable, used to manage and validate the
                         PostgreSQL db and the ledger database of the cardano-db-sync node
@@ -54,7 +54,7 @@ library
                         Cardano.DbTool.Validate.Withdrawal
                         Paths_cardano_db_tool
 
-  build-depends:        base                            >= 4.14         && < 4.17
+  build-depends:        base                            >= 4.14         && < 5
                       , base16-bytestring
                       , bytestring
                       , ansi-terminal
@@ -100,11 +100,10 @@ executable cardano-db-tool
 
   other-modules:        Paths_cardano_db_tool
 
-  build-depends:        base                            >= 4.14         && < 4.17
+  build-depends:        base
                       , cardano-db
                       , cardano-db-sync
                       , cardano-db-tool
                       , cardano-slotting
                       , optparse-applicative
                       , text
-                      , transformers-except

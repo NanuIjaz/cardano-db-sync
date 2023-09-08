@@ -14,9 +14,9 @@ module Cardano.DbSync.Config.Cardano (
 ) where
 
 import qualified Cardano.Chain.Genesis as Byron
+import Cardano.Chain.Update (ApplicationName (..), SoftwareVersion (..))
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import Cardano.Crypto.ProtocolMagic (ProtocolMagicId (..))
-import Cardano.Db (textShow)
 import Cardano.DbSync.Config.Alonzo
 import Cardano.DbSync.Config.Byron
 import Cardano.DbSync.Config.Shelley
@@ -28,9 +28,9 @@ import Cardano.Ledger.Binary.Version
 import Cardano.Ledger.Conway.Genesis
 import Cardano.Ledger.Keys
 import Cardano.Ledger.Shelley.Translation (emptyFromByronTranslationContext)
-import Cardano.Prelude (panic)
 import Control.Monad.Trans.Except (ExceptT)
 import Data.Word (Word64)
+import Ouroboros.Consensus.Block.Forging
 import Ouroboros.Consensus.Cardano (Nonce (..), ProtVer (ProtVer))
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import qualified Ouroboros.Consensus.Cardano.Node as Consensus
@@ -72,7 +72,7 @@ cardanoLedgerConfig :: GenesisConfig -> LedgerConfig CardanoBlock
 cardanoLedgerConfig = topLevelConfigLedger . mkTopLevelConfig
 
 mkTopLevelConfig :: GenesisConfig -> TopLevelConfig CardanoBlock
-mkTopLevelConfig cfg = Consensus.pInfoConfig $ mkProtocolInfoCardano cfg []
+mkTopLevelConfig cfg = Consensus.pInfoConfig $ fst $ mkProtocolInfoCardano cfg []
 
 -- Need a concrete type for 'm' ('IO') to make the type checker happy.
 
@@ -83,7 +83,7 @@ mkTopLevelConfig cfg = Consensus.pInfoConfig $ mkProtocolInfoCardano cfg []
 mkProtocolInfoCardano ::
   GenesisConfig ->
   [Consensus.ShelleyLeaderCredentials StandardCrypto] -> -- this is not empty only in tests
-  ProtocolInfo IO CardanoBlock
+  (ProtocolInfo CardanoBlock, IO [BlockForging IO CardanoBlock])
 mkProtocolInfoCardano ge shelleyCred =
   case ge of
     GenesisCardano dnc byronGenesis shelleyGenesis alonzoGenesis ->
@@ -92,7 +92,7 @@ mkProtocolInfoCardano ge shelleyCred =
           { Consensus.byronGenesis = byronGenesis
           , Consensus.byronPbftSignatureThreshold = Consensus.PBftSignatureThreshold <$> dncPBftSignatureThreshold dnc
           , Consensus.byronProtocolVersion = dncByronProtocolVersion dnc
-          , Consensus.byronSoftwareVersion = dncByronSoftwareVersion dnc
+          , Consensus.byronSoftwareVersion = mkByronSoftwareVersion
           , Consensus.byronLeaderCredentials = Nothing
           , Consensus.byronMaxTxCapacityOverrides = TxLimits.mkOverrides TxLimits.noOverridesMeasure
           }
@@ -130,7 +130,7 @@ mkProtocolInfoCardano ge shelleyCred =
         (Consensus.ProtocolTransitionParamsShelleyBased () $ dncMaryHardFork dnc)
         (Consensus.ProtocolTransitionParamsShelleyBased alonzoGenesis $ dncAlonzoHardFork dnc)
         (Consensus.ProtocolTransitionParamsShelleyBased () $ dncBabbageHardFork dnc)
-        (Consensus.ProtocolTransitionParamsShelleyBased (ConwayGenesis (GenDelegs mempty)) Consensus.TriggerHardForkNever) -- TODO: Conway Fix
+        (Consensus.ProtocolTransitionParamsShelleyBased (ConwayGenesis (GenDelegs mempty)) $ dncConwayHardFork dnc) -- TODO: Conway Fix
 
 shelleyPraosNonce :: ShelleyConfig -> Nonce
 shelleyPraosNonce sCfg = Nonce (Crypto.castHash . unGenesisHashShelley $ scGenesisHash sCfg)
@@ -138,5 +138,12 @@ shelleyPraosNonce sCfg = Nonce (Crypto.castHash . unGenesisHashShelley $ scGenes
 mkProtVer :: Word64 -> Word64 -> ProtVer
 mkProtVer a b =
   case mkVersion64 a of
-    Nothing -> panic $ "Impossible: Invalid version generated: " <> textShow a
+    Nothing -> error $ "Impossible: Invalid version generated: " <> show a
     Just v -> ProtVer v (fromIntegral b)
+
+mkByronSoftwareVersion :: SoftwareVersion
+mkByronSoftwareVersion =
+  SoftwareVersion name ver
+  where
+    name = ApplicationName "cardano-sl"
+    ver = 1

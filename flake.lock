@@ -3,11 +3,11 @@
     "CHaP": {
       "flake": false,
       "locked": {
-        "lastModified": 1683268896,
-        "narHash": "sha256-Bf2XIbQ3YCYPbkySLlPmmxRdEQeZMqTM1mA/VQvB9sc=",
+        "lastModified": 1691400306,
+        "narHash": "sha256-8YdXsDhMzLyDcU9LoAbMER2RXJ60ntQ0tpDLIsqvO/k=",
         "owner": "input-output-hk",
         "repo": "cardano-haskell-packages",
-        "rev": "b5da84a9711693e408ec94ad17fbb02883a3b87b",
+        "rev": "8a16db9be7cbf3270de8b9366ab71df8c3359f0f",
         "type": "github"
       },
       "original": {
@@ -357,14 +357,14 @@
         "type": "github"
       }
     },
-    "hackage": {
+    "hackageNix": {
       "flake": false,
       "locked": {
-        "lastModified": 1684283135,
-        "narHash": "sha256-kG6+9ke7nYsbdvpMgxFcUi5eLA5WChL0DkP655si89U=",
+        "lastModified": 1691488289,
+        "narHash": "sha256-nbX4MVLR1EprW150IbONfDmRfdwLiQO+XLeMsSFB7FQ=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "720c07ced0ec9132ada4cd8f14b908330a1b290b",
+        "rev": "022bed4e939d49679a50bd8326fa407ec9f1d39a",
         "type": "github"
       },
       "original": {
@@ -383,7 +383,9 @@
         "flake-compat": "flake-compat_2",
         "flake-utils": "flake-utils",
         "ghc-8.6.5-iohk": "ghc-8.6.5-iohk",
-        "hackage": "hackage",
+        "hackage": [
+          "hackageNix"
+        ],
         "hls-1.10": "hls-1.10",
         "hpc-coveralls": "hpc-coveralls",
         "hydra": "hydra",
@@ -522,11 +524,11 @@
         "sodium": "sodium"
       },
       "locked": {
-        "lastModified": 1684223806,
-        "narHash": "sha256-IyLoP+zhuyygLtr83XXsrvKyqqLQ8FHXTiySFf4FJOI=",
+        "lastModified": 1691469905,
+        "narHash": "sha256-TV0p1dFGYAMl1dLJEfe/tNFjxvV2H7VgHU1I43q+b84=",
         "owner": "input-output-hk",
         "repo": "iohk-nix",
-        "rev": "86421fdd89b3af43fa716ccd07638f96c6ecd1e4",
+        "rev": "2f3760f135616ebc477d3ed74eba9b63c22f83a0",
         "type": "github"
       },
       "original": {
@@ -940,6 +942,7 @@
         "CHaP": "CHaP",
         "customConfig": "customConfig",
         "flake-compat": "flake-compat",
+        "hackageNix": "hackageNix",
         "haskellNix": "haskellNix",
         "iohkNix": "iohkNix",
         "nixpkgs": [

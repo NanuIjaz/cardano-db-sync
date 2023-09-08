@@ -23,6 +23,7 @@ import Cardano.DbSync.Types (
  )
 import Cardano.Ledger.Alonzo.Scripts (Prices)
 import qualified Cardano.Ledger.BaseTypes as Ledger
+import Cardano.Ledger.Coin (Coin)
 import Cardano.Prelude hiding (atomically)
 import Cardano.Slotting.Slot (
   EpochNo (..),
@@ -33,7 +34,7 @@ import Control.Concurrent.Class.MonadSTM.Strict (
   StrictTVar,
  )
 import Control.Concurrent.STM.TBQueue (TBQueue)
-
+import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Strict.Maybe as Strict
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (SystemStart (..))
@@ -49,7 +50,7 @@ import Prelude (fail, id)
 
 data HasLedgerEnv = HasLedgerEnv
   { leTrace :: Trace IO Text
-  , leProtocolInfo :: !(Consensus.ProtocolInfo IO CardanoBlock)
+  , leProtocolInfo :: !(Consensus.ProtocolInfo CardanoBlock)
   , leDir :: !LedgerStateDir
   , leNetwork :: !Ledger.Network
   , leSystemStart :: !SystemStart
@@ -87,6 +88,7 @@ instance FromCBOR EpochBlockNo where
       1 -> pure EBBEpochBlockNo
       2 -> EpochBlockNo <$> fromCBOR
       n -> fail $ "unexpected EpochBlockNo value " <> show n
+
 encodeCardanoLedgerState :: (ExtLedgerState CardanoBlock -> Encoding) -> CardanoLedgerState -> Encoding
 encodeCardanoLedgerState encodeExt cls =
   mconcat
@@ -109,14 +111,24 @@ data LedgerStateFile = LedgerStateFile
   }
   deriving (Show)
 
+newtype DepositsMap = DepositsMap {unDepositsMap :: Map ByteString Coin}
+
+lookupDepositsMap :: ByteString -> DepositsMap -> Maybe Coin
+lookupDepositsMap bs = Map.lookup bs . unDepositsMap
+
+emptyDepositsMap :: DepositsMap
+emptyDepositsMap = DepositsMap Map.empty
+
 -- The result of applying a new block. This includes all the data that insertions require.
 data ApplyResult = ApplyResult
   { apPrices :: !(Strict.Maybe Prices) -- prices after the block application
   , apPoolsRegistered :: !(Set.Set PoolKeyHash) -- registered before the block application
   , apNewEpoch :: !(Strict.Maybe Generic.NewEpoch) -- Only Just for a single block at the epoch boundary
+  , apOldLedger :: !(Strict.Maybe CardanoLedgerState)
   , apSlotDetails :: !SlotDetails
   , apStakeSlice :: !Generic.StakeSliceRes
   , apEvents :: ![LedgerEvent]
+  , apDepositsMap :: !DepositsMap
   }
 
 defaultApplyResult :: SlotDetails -> ApplyResult
@@ -125,9 +137,11 @@ defaultApplyResult slotDetails =
     { apPrices = Strict.Nothing
     , apPoolsRegistered = Set.empty
     , apNewEpoch = Strict.Nothing
+    , apOldLedger = Strict.Nothing
     , apSlotDetails = slotDetails
     , apStakeSlice = Generic.NoSlices
     , apEvents = []
+    , apDepositsMap = emptyDepositsMap
     }
 
 newtype LedgerDB = LedgerDB

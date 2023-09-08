@@ -7,7 +7,6 @@ module Cardano.DbSync.Config.Alonzo (
   readAlonzoGenesisConfig,
 ) where
 
-import Cardano.Api.Orphans ()
 import qualified Cardano.Crypto.Hash as Crypto
 import Cardano.Db (textShow)
 import Cardano.DbSync.Config.Types
@@ -27,7 +26,7 @@ readAlonzoGenesisConfig ::
   ExceptT SyncNodeError IO AlonzoGenesis
 readAlonzoGenesisConfig enc = do
   let file = unGenesisFile $ dncAlonzoGenesisFile enc
-  firstExceptT (NEAlonzoConfig file . renderAlonzoGenesisError) $
+  firstExceptT (SNErrAlonzoConfig file . renderAlonzoGenesisError) $
     readGenesis (GenesisFile file) Nothing
 
 data AlonzoGenesisError

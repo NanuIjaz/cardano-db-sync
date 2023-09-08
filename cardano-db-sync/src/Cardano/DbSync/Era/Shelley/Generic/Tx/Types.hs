@@ -2,6 +2,9 @@
 
 module Cardano.DbSync.Era.Shelley.Generic.Tx.Types (
   Tx (..),
+  ShelleyCert,
+  ConwayCert,
+  Cert,
   TxCertificate (..),
   TxWithdrawal (..),
   TxIn (..),
@@ -10,24 +13,28 @@ module Cardano.DbSync.Era.Shelley.Generic.Tx.Types (
   TxScript (..),
   PlutusData (..),
   TxOutDatum (..),
+  toTxCert,
   whenInlineDatum,
   getTxOutDatumHash,
   getMaybeDatumHash,
   sumTxOutCoin,
 ) where
 
-import Cardano.Api.Shelley (TxMetadataValue (..))
 import Cardano.Db (ScriptType (..))
+import Cardano.DbSync.Era.Shelley.Generic.Metadata (TxMetadataValue (..))
 import Cardano.DbSync.Era.Shelley.Generic.ParamProposal
 import Cardano.DbSync.Types
 import qualified Cardano.Ledger.Address as Ledger
 import Cardano.Ledger.Alonzo.Scripts (Tag (..))
 import Cardano.Ledger.Coin (Coin (..))
+import Cardano.Ledger.Conway.Governance
+import Cardano.Ledger.Conway.TxCert (ConwayTxCert)
 import Cardano.Ledger.Mary.Value (AssetName, MultiAsset, PolicyID)
 import qualified Cardano.Ledger.Shelley.TxBody as Shelley
+import Cardano.Ledger.Shelley.TxCert
 import Cardano.Prelude
 import Cardano.Slotting.Slot (SlotNo (..))
-import Ouroboros.Consensus.Cardano.Block (StandardCrypto)
+import Ouroboros.Consensus.Cardano.Block (StandardConway, StandardCrypto, StandardShelley)
 
 data Tx = Tx
   { txHash :: !ByteString
@@ -54,12 +61,18 @@ data Tx = Tx
   , txScriptSizes :: [Word64] -- this contains only the sizes of plutus scripts in witnesses
   , txScripts :: [TxScript]
   , txExtraKeyWitnesses :: ![ByteString]
+  , txVotingProcedure :: ![VotingProcedure StandardConway]
+  , txProposalProcedure :: ![ProposalProcedure StandardConway]
   }
+
+type ShelleyCert = ShelleyTxCert StandardShelley
+type ConwayCert = ConwayTxCert StandardConway
+type Cert = Either ShelleyCert ConwayCert
 
 data TxCertificate = TxCertificate
   { txcRedeemerIndex :: !(Maybe Word64)
   , txcIndex :: !Word16
-  , txcCert :: !(Shelley.DCert StandardCrypto)
+  , txcCert :: !Cert
   }
 
 data TxWithdrawal = TxWithdrawal
@@ -114,6 +127,14 @@ data PlutusData = PlutusData
   }
 
 data TxOutDatum = InlineDatum PlutusData | DatumHash DataHash | NoDatum
+
+toTxCert :: Word16 -> Cert -> TxCertificate
+toTxCert idx dcert =
+  TxCertificate
+    { txcRedeemerIndex = Nothing
+    , txcIndex = idx
+    , txcCert = dcert
+    }
 
 whenInlineDatum :: Monad m => TxOutDatum -> (PlutusData -> m a) -> m (Maybe a)
 whenInlineDatum (InlineDatum pd) f = Just <$> f pd

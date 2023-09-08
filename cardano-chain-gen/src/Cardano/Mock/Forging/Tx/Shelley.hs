@@ -22,6 +22,7 @@ import Cardano.Ledger.Credential
 import Cardano.Ledger.Shelley.Tx hiding (ShelleyTx)
 import qualified Cardano.Ledger.Shelley.Tx as ShelleyTx
 import Cardano.Ledger.Shelley.TxBody
+import Cardano.Ledger.Shelley.TxCert
 import Cardano.Mock.Forging.Tx.Generic
 import Cardano.Mock.Forging.Types
 import Cardano.Prelude
@@ -30,7 +31,7 @@ import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Set as Set
 import Lens.Micro
-import Ouroboros.Consensus.Cardano.Block (LedgerState)
+import Ouroboros.Consensus.Cardano.Block (LedgerState, StandardShelley)
 import Ouroboros.Consensus.Shelley.Eras (ShelleyEra, StandardCrypto)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 
@@ -72,11 +73,11 @@ mkSimpleTx txBody =
     mempty
     (maybeToStrictMaybe Nothing)
 
-mkDCertTx :: [DCert StandardCrypto] -> Withdrawals StandardCrypto -> Either ForgingError ShelleyTx
+mkDCertTx :: [ShelleyTxCert StandardShelley] -> Withdrawals StandardCrypto -> Either ForgingError ShelleyTx
 mkDCertTx certs wdrl = Right $ mkSimpleTx $ consCertTxBody certs wdrl
 
 mkSimpleDCertTx ::
-  [(StakeIndex, StakeCredential StandardCrypto -> DCert StandardCrypto)] ->
+  [(StakeIndex, StakeCredential StandardCrypto -> ShelleyTxCert StandardShelley)] ->
   ShelleyLedgerState ->
   Either ForgingError ShelleyTx
 mkSimpleDCertTx consDert st = do
@@ -92,14 +93,14 @@ consPaymentTxBody ::
   ShelleyTxBody (ShelleyEra StandardCrypto)
 consPaymentTxBody ins outs fees = consTxBody ins outs fees mempty (Withdrawals mempty)
 
-consCertTxBody :: [DCert StandardCrypto] -> Withdrawals StandardCrypto -> ShelleyTxBody (ShelleyEra StandardCrypto)
+consCertTxBody :: [ShelleyTxCert StandardShelley] -> Withdrawals StandardCrypto -> ShelleyTxBody (ShelleyEra StandardCrypto)
 consCertTxBody = consTxBody mempty mempty (Coin 0)
 
 consTxBody ::
   Set (TxIn StandardCrypto) ->
   StrictSeq (ShelleyTxOut (ShelleyEra StandardCrypto)) ->
   Coin ->
-  [DCert StandardCrypto] ->
+  [ShelleyTxCert StandardShelley] ->
   Withdrawals StandardCrypto ->
   ShelleyTxBody (ShelleyEra StandardCrypto)
 consTxBody ins outs fees certs wdrl =

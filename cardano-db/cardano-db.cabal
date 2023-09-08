@@ -1,7 +1,7 @@
 cabal-version:          3.0
 
 name:                   cardano-db
-version:                13.1.1.2
+version:                13.1.1.3
 synopsis:               A base PostgreSQL component for the cardano-db-sync node.
 description:            Code for the Cardano DB Sync node that is shared between the
                         cardano-db-node and other components.
@@ -56,7 +56,7 @@ library
                         Cardano.Db.Version
 
   build-depends:        aeson
-                      , base                            >= 4.14         && < 4.17
+                      , base                            >= 4.14         && < 5
                       , bech32
                       , base16-bytestring
                       , bytestring
@@ -92,7 +92,6 @@ library
                       , template-haskell
                       , time
                       , transformers
-                      , transformers-except
                       -- This is never intended to run on non-POSIX systems.
                       , unix
                       , wide-word
@@ -118,7 +117,7 @@ test-suite test
                         Test.Property.Upstream
 
 
-  build-depends:        base                            >= 4.14         && < 4.17
+  build-depends:        base
                       , aeson
                       , base16-bytestring
                       , bytestring
@@ -126,7 +125,7 @@ test-suite test
                       , cardano-db
                       , cardano-ledger-byron
                       , cardano-ledger-core
-                      , cardano-ledger-mary == 1.1.0.0
+                      , cardano-ledger-mary
                       , persistent
                       , hedgehog
                       , text
@@ -155,7 +154,7 @@ test-suite test-db
                         -Wunused-imports
                         -Wunused-packages
 
-  build-depends:        base                            >= 4.14         && < 4.17
+  build-depends:        base
                       , bytestring
                       , cardano-db
                       , cardano-slotting
@@ -169,7 +168,6 @@ test-suite test-db
                       , text
                       , time
                       , transformers
-                      , transformers-except
 
 executable gen-schema-docs
   default-language:     Haskell2010
@@ -192,7 +190,7 @@ executable gen-schema-docs
 
   other-modules:        Paths_cardano_db
 
-  build-depends:        base                            >= 4.14         && < 4.17
+  build-depends:        base
                       , cardano-db
                       , persistent-documentation
                       , process
@@ -214,7 +212,7 @@ test-suite schema-rollback
                         -Wunused-imports
                         -Wunused-packages
 
-  build-depends:        base                            >= 4.14         && < 4.17
+  build-depends:        base
                       , ansi-terminal
                       , bytestring
                       , cardano-db

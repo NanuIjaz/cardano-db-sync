@@ -83,7 +83,8 @@ migrateTxOut mTrace = do
       mapM_ migratePair page
       when (fromIntegral (length page) == pageSize) $
         migrateNextPage $!
-          offst + pageSize
+          offst
+            + pageSize
 
 migratePair :: MonadIO m => (TxInId, TxId, Word64) -> ReaderT SqlBackend m ()
 migratePair (txInId, txId, index) =
@@ -92,8 +93,8 @@ migratePair (txInId, txId, index) =
 pageSize :: Word64
 pageSize = 100_000
 
-isMigrated :: MonadIO m => ReaderT SqlBackend m Bool
-isMigrated = do
+queryTxConsumedColumnExists :: MonadIO m => ReaderT SqlBackend m Bool
+queryTxConsumedColumnExists = do
   columntExists :: [Text] <-
     fmap unSingle
       <$> rawSql
@@ -122,7 +123,6 @@ queryTxOutConsumedCount = do
     pure countRows
   pure $ maybe 0 unValue (listToMaybe res)
 
-
 createConsumedTxOut :: MonadIO m => ReaderT SqlBackend m ()
 createConsumedTxOut = do
   rawExecute
@@ -137,7 +137,7 @@ createConsumedTxOut = do
 
 _validateMigration :: MonadIO m => Trace IO Text -> ReaderT SqlBackend m Bool
 _validateMigration trce = do
-  _migrated <- isMigrated
+  _migrated <- queryTxConsumedColumnExists
   --  unless migrated $ runMigration
   txInCount <- countTxIn
   consumedTxOut <- countConsumed

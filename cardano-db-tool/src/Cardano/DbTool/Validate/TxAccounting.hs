@@ -16,6 +16,7 @@ import Control.Monad.Trans.Except.Extra (left, runExceptT)
 import Control.Monad.Trans.Reader (ReaderT)
 import Data.Int (Int64)
 import qualified Data.List as List
+import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
 import Database.Esqueleto.Experimental (
   Entity (entityVal),
@@ -149,8 +150,8 @@ queryTxFeeDeposit txId = do
     pure (tx ^. TxFee, tx ^. TxDeposit)
   pure $ maybe (0, 0) convert (listToMaybe res)
   where
-    convert :: (Value DbLovelace, Value Int64) -> (Ada, Int64)
-    convert (Value (DbLovelace w64), Value i64) = (word64ToAda w64, i64)
+    convert :: (Value DbLovelace, Value (Maybe Int64)) -> (Ada, Int64)
+    convert (Value (DbLovelace w64), d) = (word64ToAda w64, fromMaybe 0 (unValue d))
 
 queryTxInputs :: MonadIO m => Word64 -> ReaderT SqlBackend m [TxOut]
 queryTxInputs txId = do

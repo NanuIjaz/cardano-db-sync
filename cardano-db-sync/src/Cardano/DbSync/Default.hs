@@ -22,6 +22,7 @@ import Cardano.DbSync.Era.Shelley.Insert (insertShelleyBlock, mkAdaPots)
 import Cardano.DbSync.Era.Shelley.Insert.Epoch (insertPoolDepositRefunds, insertRewards)
 import Cardano.DbSync.Era.Shelley.Validate (validateEpochRewards)
 import Cardano.DbSync.Error
+import Cardano.DbSync.Fix.EpochStake
 import Cardano.DbSync.Ledger.Event (LedgerEvent (..))
 import Cardano.DbSync.Ledger.State (applyBlockAndSnapshot, defaultApplyResult)
 import Cardano.DbSync.Ledger.Types (ApplyResult (..))
@@ -81,6 +82,7 @@ applyAndInsertBlockMaybe syncEnv cblk = do
               , ". Time to restore consistency."
               ]
           rollbackFromBlockNo syncEnv (blockNo cblk)
+          void $ migrateStakeDistr syncEnv (apOldLedger applyRes)
           insertBlock syncEnv cblk applyRes True tookSnapshot
           liftIO $ setConsistentLevel syncEnv Consistent
         Right blockId | Just (adaPots, slotNo, epochNo) <- getAdaPots applyRes -> do
@@ -169,7 +171,10 @@ insertBlock syncEnv cblk applyRes firstAfterRollback tookSnapshot = do
       newExceptT $
         insertShelley $
           Generic.fromBabbageBlock (ioPlutusExtra iopts) (getPrices applyResult) blk
-    BlockConway _blk -> panic "TODO: Conway 1"
+    BlockConway blk ->
+      newExceptT $
+        insertShelley $
+          Generic.fromConwayBlock (ioPlutusExtra iopts) (getPrices applyResult) blk
   -- update the epoch
   updateEpoch details isNewEpochEvent
   whenPruneTxOut syncEnv $
@@ -285,6 +290,7 @@ insertLedgerEvents syncEnv currentEpochNo@(EpochNo curEpoch) =
         LedgerPoolReap en drs -> do
           unless (Map.null $ Generic.unRewards drs) $ do
             insertPoolDepositRefunds syncEnv en drs
+        LedgerDeposits {} -> pure ()
 
 hasEpochStartEvent :: [LedgerEvent] -> Bool
 hasEpochStartEvent = any isNewEpoch

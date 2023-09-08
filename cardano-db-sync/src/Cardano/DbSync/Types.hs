@@ -42,6 +42,8 @@ import qualified Ouroboros.Consensus.Cardano.Block as Cardano
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
+import Ouroboros.Consensus.Shelley.Protocol.Praos ()
+import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Network.Block (BlockNo, Point)
 
 type TPraosStandard = TPraos StandardCrypto
@@ -73,6 +75,7 @@ data BlockEra
   | Mary
   | Alonzo
   | Babbage
+  | Conway
   deriving (Eq, Show)
 
 -- | Slot within an Epoch.

@@ -10,7 +10,7 @@ module Cardano.DbSync.Fix.PlutusScripts where
 
 import Cardano.Prelude (mapMaybe)
 
-import Control.Monad.Except
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT)
 import Data.ByteString (ByteString)
@@ -141,13 +141,13 @@ fixPlutusScripts tracer cblk fpss = do
 
 scrapScriptBlock :: CardanoBlock -> Map ByteString ByteString
 scrapScriptBlock cblk = case cblk of
-  BlockBabbage blk -> Map.unions $ scrapScriptTxBabbage . snd <$> babbageBlockTxs blk
-  BlockAlonzo blk -> Map.unions $ scrapScriptTxAlonzo . snd <$> alonzoBlockTxs blk
+  BlockBabbage blk -> Map.unions $ scrapScriptTxBabbage . snd <$> getTxs blk
+  BlockAlonzo blk -> Map.unions $ scrapScriptTxAlonzo . snd <$> getTxs blk
   BlockByron _ -> error "No Plutus Scripts in Byron"
   BlockShelley _ -> error "No Plutus Scripts in Shelley"
   BlockAllegra _ -> error "No Plutus Scripts in Allegra"
   BlockMary _ -> error "No Plutus Scripts in Mary"
-  _ -> error "TODO: Conway not supported"
+  _ -> mempty -- This bug existed in a version that didn't support Conway or later eras
 
 scrapScriptTxBabbage :: Ledger.Tx StandardBabbage -> Map ByteString ByteString
 scrapScriptTxBabbage tx = Map.union txMap txOutMap

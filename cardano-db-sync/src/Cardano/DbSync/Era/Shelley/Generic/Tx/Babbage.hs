@@ -1,13 +1,16 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Cardano.DbSync.Era.Shelley.Generic.Tx.Babbage (
   fromBabbageTx,
   fromScript,
+  fromTxOut,
 ) where
 
 import Cardano.DbSync.Era.Shelley.Generic.Metadata
@@ -20,6 +23,7 @@ import qualified Cardano.Ledger.Address as Ledger
 import qualified Cardano.Ledger.Alonzo.Scripts as Alonzo
 import qualified Cardano.Ledger.Alonzo.Scripts.Data as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
+import Cardano.Ledger.Babbage.Core as Core hiding (Tx, TxOut)
 import Cardano.Ledger.Babbage.TxBody (BabbageTxOut)
 import qualified Cardano.Ledger.Babbage.TxBody as Babbage
 import Cardano.Ledger.BaseTypes
@@ -30,8 +34,11 @@ import Cardano.Ledger.Mary.Value (MaryValue (..), MultiAsset (..))
 import Cardano.Prelude
 import qualified Data.ByteString.Short as SBS
 import qualified Data.Map.Strict as Map
+#if __GLASGOW_HASKELL__ >= 906
+import Data.Type.Equality (type (~))
+#endif
 import Lens.Micro
-import Ouroboros.Consensus.Shelley.Eras (EraCrypto, StandardBabbage, StandardCrypto)
+import Ouroboros.Consensus.Shelley.Eras (StandardBabbage, StandardCrypto)
 
 fromBabbageTx :: Bool -> Maybe Alonzo.Prices -> (Word64, Core.Tx StandardBabbage) -> Tx
 fromBabbageTx ioExtraPlutus mprices (blkIndex, tx) =
@@ -73,6 +80,8 @@ fromBabbageTx ioExtraPlutus mprices (blkIndex, tx) =
     , txScriptSizes = getPlutusSizes tx
     , txScripts = getScripts tx
     , txExtraKeyWitnesses = extraKeyWits txBody
+    , txVotingProcedure = []
+    , txProposalProcedure = []
     }
   where
     txBody :: Core.TxBody StandardBabbage
@@ -80,23 +89,6 @@ fromBabbageTx ioExtraPlutus mprices (blkIndex, tx) =
 
     outputs :: [TxOut]
     outputs = zipWith fromTxOut [0 ..] $ toList (Babbage.outputs' txBody)
-
-    fromTxOut :: Word64 -> BabbageTxOut StandardBabbage -> TxOut
-    fromTxOut index txOut =
-      TxOut
-        { txOutIndex = index
-        , txOutAddress = txOut ^. Core.addrTxOutL
-        , txOutAddressRaw = SBS.fromShort bs
-        , txOutAdaValue = Coin ada
-        , txOutMaValue = maMap
-        , txOutScript = fromScript <$> strictMaybeToMaybe mScript
-        , txOutDatum = fromDatum datum
-        }
-      where
-        bs = Ledger.unCompactAddr $ txOut ^. Core.compactAddrTxOutL
-        MaryValue ada (MultiAsset maMap) = txOut ^. Core.valueTxOutL
-        datum = txOut ^. Babbage.datumTxOutL
-        mScript = txOut ^. Babbage.referenceScriptTxOutL
 
     -- TODO when collateral output is used as output, its index is not 0, but length of outputs
     -- even though it is the unique output of the tx.
@@ -115,10 +107,37 @@ fromBabbageTx ioExtraPlutus mprices (blkIndex, tx) =
       case Alonzo.isValid tx of
         Alonzo.IsValid x -> x
 
-    (finalMaps, redeemers) = resolveRedeemers ioExtraPlutus mprices tx
+    (finalMaps, redeemers) = resolveRedeemers ioExtraPlutus mprices tx (Left . toShelleyCert)
     (invalidBefore, invalidAfter) = getInterval txBody
 
     collInputs = mkCollTxIn txBody
+
+fromTxOut ::
+  forall era.
+  ( Core.BabbageEraTxOut era
+  , EraCrypto era ~ StandardCrypto
+  , Core.Value era ~ MaryValue (EraCrypto era)
+  , Core.TxOut era ~ BabbageTxOut era
+  , Core.Script era ~ Alonzo.AlonzoScript era
+  ) =>
+  Word64 ->
+  BabbageTxOut era ->
+  TxOut
+fromTxOut index txOut =
+  TxOut
+    { txOutIndex = index
+    , txOutAddress = txOut ^. Core.addrTxOutL
+    , txOutAddressRaw = SBS.fromShort bs
+    , txOutAdaValue = Coin ada
+    , txOutMaValue = maMap
+    , txOutScript = fromScript <$> strictMaybeToMaybe mScript
+    , txOutDatum = fromDatum datum
+    }
+  where
+    bs = Ledger.unCompactAddr $ txOut ^. Core.compactAddrTxOutL
+    MaryValue ada (MultiAsset maMap) = txOut ^. Core.valueTxOutL
+    datum = txOut ^. Core.datumTxOutL
+    mScript = txOut ^. Core.referenceScriptTxOutL
 
 fromScript ::
   forall era.

@@ -17,7 +17,8 @@ module Test.Cardano.Db.Mock.Unit.Alonzo.Stake (
 
 import qualified Cardano.Db as DB
 import Cardano.Ledger.BaseTypes (CertIx (CertIx), TxIx (TxIx))
-import Cardano.Ledger.Shelley.TxBody (DCert (..), DelegCert (..), Ptr (..))
+import Cardano.Ledger.Shelley.TxBody (Ptr (..))
+import Cardano.Ledger.Shelley.TxCert
 import Cardano.Mock.ChainSync.Server (IOManager, addBlock)
 import qualified Cardano.Mock.Forging.Tx.Alonzo as Alonzo
 import Cardano.Mock.Forging.Tx.Alonzo.Scenarios (delegateAndSendBlocks)
@@ -30,6 +31,7 @@ import Test.Cardano.Db.Mock.Config (alonzoConfigDir, startDBSync, withFullConfig
 import Test.Cardano.Db.Mock.UnifiedApi (
   fillEpochs,
   fillUntilNextEpoch,
+  forgeAndSubmitBlocks,
   forgeNextFindLeaderAndSubmit,
   forgeNextSkipSlotsFindLeaderAndSubmit,
   getAlonzoLedgerState,
@@ -57,11 +59,11 @@ registrationTx =
 
     void $
       withAlonzoFindLeaderAndSubmitTx interpreter mockServer $
-        Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . RegKey)]
+        Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyRegCert)]
 
     void $
       withAlonzoFindLeaderAndSubmitTx interpreter mockServer $
-        Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . DeRegKey)]
+        Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyUnRegCert)]
 
     -- We add interval or else the txs would have the same id
     void $
@@ -69,7 +71,7 @@ registrationTx =
         interpreter
         mockServer
         ( fmap (Alonzo.addValidityInterval 1000)
-            . Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . RegKey)]
+            . Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyRegCert)]
         )
 
     void $
@@ -77,7 +79,7 @@ registrationTx =
         interpreter
         mockServer
         ( fmap (Alonzo.addValidityInterval 2000)
-            . Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . DeRegKey)]
+            . Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyUnRegCert)]
         )
 
     assertBlockNoBackoff dbSync 4
@@ -91,10 +93,10 @@ registrationsSameBlock =
     startDBSync dbSync
 
     void $ withAlonzoFindLeaderAndSubmit interpreter mockServer $ \st -> do
-      tx0 <- Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . RegKey)] st
-      tx1 <- Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . DeRegKey)] st
-      tx2 <- Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . RegKey)] st
-      tx3 <- Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . DeRegKey)] st
+      tx0 <- Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyRegCert)] st
+      tx1 <- Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyUnRegCert)] st
+      tx2 <- Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyRegCert)] st
+      tx3 <- Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyUnRegCert)] st
       Right [tx0, tx1, Alonzo.addValidityInterval 1000 tx2, Alonzo.addValidityInterval 2000 tx3]
 
     assertBlockNoBackoff dbSync 1
@@ -110,10 +112,10 @@ registrationsSameTx =
     void $
       withAlonzoFindLeaderAndSubmitTx interpreter mockServer $
         Alonzo.mkSimpleDCertTx
-          [ (StakeIndexNew 1, DCertDeleg . RegKey)
-          , (StakeIndexNew 1, DCertDeleg . DeRegKey)
-          , (StakeIndexNew 1, DCertDeleg . RegKey)
-          , (StakeIndexNew 1, DCertDeleg . DeRegKey)
+          [ (StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyRegCert)
+          , (StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyUnRegCert)
+          , (StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyRegCert)
+          , (StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyUnRegCert)
           ]
 
     assertBlockNoBackoff dbSync 1
@@ -128,7 +130,7 @@ stakeAddressPtr =
 
     blk <-
       withAlonzoFindLeaderAndSubmitTx interpreter mockServer $
-        Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . RegKey)]
+        Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyRegCert)]
 
     let ptr = Ptr (blockSlot blk) (TxIx 0) (CertIx 0)
 
@@ -148,7 +150,7 @@ stakeAddressPtrDereg =
 
     blk <-
       withAlonzoFindLeaderAndSubmitTx interpreter mockServer $
-        Alonzo.mkSimpleDCertTx [(StakeIndexNew 0, DCertDeleg . RegKey)]
+        Alonzo.mkSimpleDCertTx [(StakeIndexNew 0, ShelleyTxCertDelegCert . ShelleyRegCert)]
 
     let ptr0 = Ptr (blockSlot blk) (TxIx 0) (CertIx 0)
 
@@ -156,8 +158,8 @@ stakeAddressPtrDereg =
       tx0 <- Alonzo.mkPaymentTx (UTxOIndex 0) (UTxOAddressNewWithPtr 0 ptr0) 20000 20000 st
       tx1 <-
         Alonzo.mkSimpleDCertTx
-          [ (StakeIndexNew 0, DCertDeleg . DeRegKey)
-          , (StakeIndexNew 0, DCertDeleg . RegKey)
+          [ (StakeIndexNew 0, ShelleyTxCertDelegCert . ShelleyUnRegCert)
+          , (StakeIndexNew 0, ShelleyTxCertDelegCert . ShelleyRegCert)
           ]
           st
       pure [tx0, tx1]
@@ -192,7 +194,7 @@ stakeAddressPtrUseBefore =
     -- and then register it
     blk <-
       withAlonzoFindLeaderAndSubmitTx interpreter mockServer $
-        Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, DCertDeleg . RegKey)]
+        Alonzo.mkSimpleDCertTx [(StakeIndexNew 1, ShelleyTxCertDelegCert . ShelleyRegCert)]
 
     let ptr = Ptr (blockSlot blk) (TxIx 0) (CertIx 0)
 
@@ -227,7 +229,7 @@ delegations2000 =
     a <- delegateAndSendBlocks 1995 interpreter
     forM_ a $ atomically . addBlock mockServer
     b <- fillUntilNextEpoch interpreter mockServer
-    c <- fillUntilNextEpoch interpreter mockServer
+    c <- forgeAndSubmitBlocks interpreter mockServer 10
 
     assertBlockNoBackoff dbSync (fromIntegral $ length a + length b + length c)
     -- There are exactly 2000 entries on the second epoch, 5 from genesis and 1995 manually added
@@ -246,14 +248,16 @@ delegations2001 =
     a <- delegateAndSendBlocks 1996 interpreter
     forM_ a $ atomically . addBlock mockServer
     b <- fillUntilNextEpoch interpreter mockServer
-    c <- fillUntilNextEpoch interpreter mockServer
+    c <- forgeAndSubmitBlocks interpreter mockServer 9
 
     assertBlockNoBackoff dbSync (fromIntegral $ length a + length b + length c)
-    -- The first block of epoch inserts 2000 out of 2001 epoch distribution.
+    assertEpochStakeEpoch dbSync 2 0
+    void $ forgeNextFindLeaderAndSubmit interpreter mockServer []
+    assertBlockNoBackoff dbSync (fromIntegral $ length a + length b + length c + 1)
     assertEpochStakeEpoch dbSync 2 2000
     -- The remaining entry is inserted on the next block.
     void $ forgeNextFindLeaderAndSubmit interpreter mockServer []
-    assertBlockNoBackoff dbSync (fromIntegral $ length a + length b + length c + 1)
+    assertBlockNoBackoff dbSync (fromIntegral $ length a + length b + length c + 2)
     assertEpochStakeEpoch dbSync 2 2001
   where
     testLabel = "delegations2001-alonzo"
@@ -264,9 +268,10 @@ delegations8000 =
     startDBSync dbSync
     a <- delegateAndSendBlocks 7995 interpreter
     forM_ a $ atomically . addBlock mockServer
-    b <- fillEpochs interpreter mockServer 3
+    b <- fillEpochs interpreter mockServer 2
+    c <- forgeAndSubmitBlocks interpreter mockServer 10
 
-    assertBlockNoBackoff dbSync (fromIntegral $ length a + length b)
+    assertBlockNoBackoff dbSync (fromIntegral $ length a + length b + length c)
     assertEpochStakeEpoch dbSync 3 2000
 
     void $ forgeNextFindLeaderAndSubmit interpreter mockServer []
@@ -289,10 +294,11 @@ delegationsMany =
     startDBSync dbSync
     a <- delegateAndSendBlocks 40000 interpreter
     forM_ a $ atomically . addBlock mockServer
-    b <- fillEpochs interpreter mockServer 5
+    b <- fillEpochs interpreter mockServer 4
+    c <- forgeAndSubmitBlocks interpreter mockServer 10
 
     -- too long. We cannot use default delays
-    assertBlockNoBackoffTimes (repeat 10) dbSync (fromIntegral $ length a + length b)
+    assertBlockNoBackoffTimes (repeat 10) dbSync (fromIntegral $ length a + length b + length c)
     -- The slice size here is
     -- 1 + div (delegationsLen * 5) expectedBlocks = 2001
     -- instead of 2000, because there are many delegations
@@ -312,10 +318,11 @@ delegationsManyNotDense =
     startDBSync dbSync
     a <- delegateAndSendBlocks 40000 interpreter
     forM_ a $ atomically . addBlock mockServer
-    b <- fillEpochs interpreter mockServer 5
+    b <- fillEpochs interpreter mockServer 4
+    c <- forgeAndSubmitBlocks interpreter mockServer 10
 
     -- too long. We cannot use default delays
-    assertBlockNoBackoffTimes (repeat 10) dbSync (fromIntegral $ length a + length b)
+    assertBlockNoBackoffTimes (repeat 10) dbSync (fromIntegral $ length a + length b + length c)
     -- The slice size here is
     -- 1 + div (delegationsLen * 5) expectedBlocks = 2001
     -- instead of 2000, because there are many delegations

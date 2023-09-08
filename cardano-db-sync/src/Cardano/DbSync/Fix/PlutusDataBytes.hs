@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Cardano.DbSync.Fix.PlutusDataBytes where
 
@@ -25,10 +26,11 @@ import qualified Cardano.Ledger.Alonzo.TxWits as Alonzo
 import qualified Cardano.Ledger.Babbage.TxBody as Babbage
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Era as Ledger
-import Cardano.Prelude (mapMaybe, panic)
+import Cardano.Prelude (mapMaybe)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Monad.Except
+import Control.Monad (filterM, when)
 import Control.Monad.Extra (mapMaybeM)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT)
 import Data.ByteString (ByteString)
@@ -251,9 +253,9 @@ fixPlutusData tracer cblk fds = do
 
 scrapDatumsBlock :: CardanoBlock -> Map ByteString ByteString
 scrapDatumsBlock cblk = case cblk of
-  BlockConway _blk -> panic "TODO: Conway 4"
-  BlockBabbage blk -> Map.unions $ scrapDatumsTxBabbage . snd <$> babbageBlockTxs blk
-  BlockAlonzo blk -> Map.unions $ scrapDatumsTxAlonzo . snd <$> alonzoBlockTxs blk
+  BlockConway _blk -> mempty -- This bug existed in a version that didn't support Conway or later eras
+  BlockBabbage blk -> Map.unions $ scrapDatumsTxBabbage . snd <$> getTxs blk
+  BlockAlonzo blk -> Map.unions $ scrapDatumsTxAlonzo . snd <$> getTxs blk
   BlockByron _ -> error "No Datums in Byron"
   BlockShelley _ -> error "No Datums in Shelley"
   BlockAllegra _ -> error "No Datums in Allegra"
@@ -287,9 +289,9 @@ scrapDatumsTxAlonzo tx =
 
 scrapRedeemerDataBlock :: CardanoBlock -> Map ByteString ByteString
 scrapRedeemerDataBlock cblk = case cblk of
-  BlockConway _blk -> panic "TODO: Conway 5"
-  BlockBabbage blk -> Map.unions $ scrapRedeemerDataTx . snd <$> babbageBlockTxs blk
-  BlockAlonzo blk -> Map.unions $ scrapRedeemerDataTx . snd <$> alonzoBlockTxs blk
+  BlockConway _blk -> mempty -- panic "TODO: Conway 5"
+  BlockBabbage blk -> Map.unions $ scrapRedeemerDataTx . snd <$> getTxs blk
+  BlockAlonzo blk -> Map.unions $ scrapRedeemerDataTx . snd <$> getTxs blk
   BlockByron _ -> error "No RedeemerData in Byron"
   BlockShelley _ -> error "No RedeemerData in Shelley"
   BlockAllegra _ -> error "No RedeemerData in Allegra"

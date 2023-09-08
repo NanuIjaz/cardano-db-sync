@@ -4,6 +4,7 @@ module Cardano.Mock.Forging.Tx.Alonzo.Scenarios (
 
 import Cardano.Ledger.Mary.Value
 import Cardano.Ledger.Shelley.API
+import Cardano.Ledger.Shelley.TxCert
 import Cardano.Mock.Forging.Interpreter
 import qualified Cardano.Mock.Forging.Tx.Alonzo as Alonzo
 import Cardano.Mock.Forging.Tx.Generic
@@ -18,7 +19,7 @@ delegateAndSendBlocks n interpreter = do
     blockTxs <- withAlonzoLedgerState interpreter $ \_st ->
       forM (chunksOf 10 blockCreds) $ \txCreds ->
         -- 10 per tx
-        Alonzo.mkDCertTx (fmap (DCertDeleg . RegKey) txCreds) (Withdrawals mempty)
+        Alonzo.mkDCertTx (fmap (ShelleyTxCertDelegCert . ShelleyRegCert) txCreds) (Withdrawals mempty)
     forgeNextFindLeader interpreter (TxAlonzo <$> blockTxs)
 
   delegateBlocks <- forM (chunksOf 500 creds) $ \blockCreds -> do
@@ -27,7 +28,7 @@ delegateAndSendBlocks n interpreter = do
         -- do -- 10 per tx
         Alonzo.mkDCertTx
           ( fmap
-              (\(poolIx, cred) -> DCertDeleg $ Delegate $ Delegation cred (resolvePool (PoolIndex poolIx) st))
+              (\(poolIx, cred) -> ShelleyTxCertDelegCert $ ShelleyDelegCert cred (resolvePool (PoolIndex poolIx) st))
               (zip (cycle [0, 1, 2]) txCreds)
           )
           (Withdrawals mempty)

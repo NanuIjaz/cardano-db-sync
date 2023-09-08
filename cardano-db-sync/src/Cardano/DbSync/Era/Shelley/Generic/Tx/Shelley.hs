@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
@@ -14,18 +15,20 @@ module Cardano.DbSync.Era.Shelley.Generic.Tx.Shelley (
   mkTxWithdrawals,
   mkTxWithdrawal,
   mkTxCertificates,
+  toShelleyCert,
   mkTxCertificate,
   calcWithdrawalSum,
   getTxMetadata,
   mkTxParamProposal,
   txHashId,
+  txHashFromSafe,
 ) where
 
-import qualified Cardano.Api.Shelley as Api
 import qualified Cardano.Crypto.Hash as Crypto
 import Cardano.Db (ScriptType (..))
 import Cardano.DbSync.Era.Shelley.Generic.Metadata
 import Cardano.DbSync.Era.Shelley.Generic.ParamProposal
+import Cardano.DbSync.Era.Shelley.Generic.Script (fromMultiSig)
 import Cardano.DbSync.Era.Shelley.Generic.Tx.Types
 import Cardano.DbSync.Era.Shelley.Generic.Util
 import Cardano.DbSync.Era.Shelley.Generic.Witness
@@ -38,11 +41,15 @@ import qualified Cardano.Ledger.SafeHash as Ledger
 import Cardano.Ledger.Shelley.Scripts (MultiSig, ScriptHash)
 import qualified Cardano.Ledger.Shelley.Tx as ShelleyTx
 import qualified Cardano.Ledger.Shelley.TxBody as Shelley
+import Cardano.Ledger.Shelley.TxCert
 import Cardano.Prelude
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified Data.ByteString.Short as SBS
 import qualified Data.Map.Strict as Map
+#if __GLASGOW_HASKELL__ >= 906
+import Data.Type.Equality (type (~))
+#endif
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Cardano.Block (StandardCrypto, StandardShelley)
 
@@ -73,6 +80,8 @@ fromShelleyTx (blkIndex, tx) =
     , txScriptSizes = [] -- Shelley does not support plutus scripts
     , txScripts = scripts
     , txExtraKeyWitnesses = []
+    , txVotingProcedure = []
+    , txProposalProcedure = []
     }
   where
     txBody :: Core.TxBody StandardShelley
@@ -91,7 +100,7 @@ fromShelleyTx (blkIndex, tx) =
         { txScriptHash = unScriptHash hsh
         , txScriptType = MultiSig
         , txScriptPlutusSize = Nothing
-        , txScriptJson = Just . LBS.toStrict . Aeson.encode $ Api.fromShelleyMultiSig script
+        , txScriptJson = Just . LBS.toStrict . Aeson.encode $ fromMultiSig script
         , txScriptCBOR = Nothing
         }
 
@@ -125,6 +134,9 @@ fromTxIn (ShelleyTx.TxIn (ShelleyTx.TxId txid) (TxIx w64)) =
 
 txHashId :: (EraCrypto era ~ StandardCrypto, Core.EraTx era) => Core.Tx era -> ByteString
 txHashId tx = Crypto.hashToBytes $ Ledger.extractHash $ Ledger.hashAnnotated (tx ^. Core.bodyTxL)
+
+txHashFromSafe :: Ledger.SafeHash StandardCrypto Core.EraIndependentTxBody -> ByteString
+txHashFromSafe = Crypto.hashToBytes . Ledger.extractHash
 
 getTxSize :: Core.EraTx era => Core.Tx era -> Word64
 getTxSize tx = fromIntegral $ tx ^. Core.sizeTxF
@@ -169,16 +181,27 @@ mkTxParamProposal witness txBody =
   maybe [] (convertParamProposal witness) $ strictMaybeToMaybe (txBody ^. Shelley.updateTxBodyL)
 
 mkTxCertificates ::
-  (Shelley.ShelleyEraTxBody era, EraCrypto era ~ StandardCrypto, Core.ProtVerAtMost era 8) =>
+  forall era.
+  ( Shelley.ShelleyEraTxBody era
+  , TxCert era ~ ShelleyTxCert era
+  , EraCrypto era ~ StandardCrypto
+  ) =>
   Core.TxBody era ->
   [TxCertificate]
 mkTxCertificates bd =
-  zipWith mkTxCertificate [0 ..] $ toList $ bd ^. Shelley.certsTxBodyL
+  zipWith mkTxCertificate [0 ..] $ toShelleyCert <$> toList (bd ^. Core.certsTxBodyL)
 
-mkTxCertificate :: Word16 -> Shelley.DCert StandardCrypto -> TxCertificate
+toShelleyCert :: EraCrypto era ~ StandardCrypto => ShelleyTxCert era -> ShelleyCert
+toShelleyCert cert = case cert of
+  ShelleyTxCertDelegCert a -> ShelleyTxCertDelegCert a
+  ShelleyTxCertPool a -> ShelleyTxCertPool a
+  ShelleyTxCertGenesisDeleg a -> ShelleyTxCertGenesisDeleg a
+  ShelleyTxCertMir a -> ShelleyTxCertMir a
+
+mkTxCertificate :: Word16 -> ShelleyCert -> TxCertificate
 mkTxCertificate idx dcert =
   TxCertificate
     { txcRedeemerIndex = Nothing
     , txcIndex = idx
-    , txcCert = dcert
+    , txcCert = Left dcert
     }

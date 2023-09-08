@@ -1,7 +1,7 @@
 cabal-version:          3.0
 
 name:                   cardano-chain-gen
-version:                13.1.1.2
+version:                13.1.1.3
 synopsis:               A fake chain generator for testing cardano DB sync.
 description:            A fake chain generator for testing cardano DB sync.
 homepage:               https://github.com/input-output-hk/cardano-db-sync
@@ -30,12 +30,14 @@ library
   hs-source-dirs:       src
 
   ghc-options:          -Wall
+                        -Werror
                         -Wcompat
-                        -fwarn-redundant-constraints
-                        -fwarn-incomplete-patterns
-                        -fwarn-unused-imports
+                        -Wredundant-constraints
+                        -Wincomplete-patterns
                         -Wincomplete-record-updates
                         -Wincomplete-uni-patterns
+                        -Wunused-imports
+                        -Wunused-packages
 
   exposed-modules:
                         Cardano.Mock.Chain
@@ -53,52 +55,29 @@ library
                         Cardano.Mock.Forging.Tx.Shelley
                         Cardano.Mock.Forging.Types
 
-  build-depends:        base                            >= 4.14         && < 4.17
+  build-depends:        base                            >= 4.14         && < 5
                       , async
                       , aeson
-                      , binary
                       , bytestring
-                      , cardano-api
                       , cardano-binary
-                      , cardano-client
-                      , cardano-crypto
                       , cardano-crypto-class
-                      , cardano-crypto-praos
-                      , cardano-crypto-wrapper
-                      , cardano-data
                       , cardano-ledger-allegra
                       , cardano-ledger-alonzo
                       , cardano-ledger-babbage
                       , cardano-ledger-binary
-                      , cardano-ledger-byron
                       , cardano-ledger-core
                       , cardano-ledger-shelley
                       , cardano-ledger-mary
-                      , cardano-node
                       , cardano-prelude
-                      , cardano-protocol-tpraos
                       , cardano-slotting
                       , cardano-strict-containers
                       , cborg
-                      , vector-map
                       , containers
                       , contra-tracer
                       , directory
-                      , esqueleto
                       , extra
-                      , filepath
-                      , groups
-                      , http-client
-                      , http-client-tls
-                      , http-types
-                      , iohk-monitoring
-                      , io-classes
-                      , lifted-base
-                      , memory
                       , mtl
-                      , monad-control
                       , microlens
-                      , network-mux
                       , nothunks
                       , ouroboros-consensus
                       , ouroboros-consensus-cardano
@@ -108,29 +87,12 @@ library
                       , ouroboros-network-api
                       , ouroboros-network-framework
                       , ouroboros-network-protocols
-                      , persistent
-                      , persistent-postgresql
                       , plutus-core
-                      , plutus-ledger-api:{plutus-ledger-api, plutus-ledger-api-testlib}
-                      , pretty-show
-                      , prometheus
-                      , random-shuffle
+                      , plutus-ledger-api:{plutus-ledger-api-testlib}
                       , serialise
-                      , set-algebra
-                      , small-steps
-                      , split
-                      , stm
-                      , strict
                       , strict-stm
-                      , swagger2
                       , text
-                      , time
-                      , transformers
-                      , transformers-except
                       , typed-protocols
-                      , unix
-                      , vector
-                      , yaml
 
 test-suite cardano-chain-gen
   type:                 exitcode-stdio-1.0
@@ -140,12 +102,15 @@ test-suite cardano-chain-gen
   hs-source-dirs:       test
 
   ghc-options:          -Wall
+                        -Wall
+                        -Werror
                         -Wcompat
-                        -fwarn-redundant-constraints
-                        -fwarn-incomplete-patterns
-                        -fwarn-unused-imports
+                        -Wredundant-constraints
+                        -Wincomplete-patterns
                         -Wincomplete-record-updates
                         -Wincomplete-uni-patterns
+                        -Wunused-imports
+                        -Wunused-packages
                         -Wno-unsafe
                         -threaded
 
@@ -181,10 +146,9 @@ test-suite cardano-chain-gen
                         Test.Cardano.Db.Mock.Validate
 
   build-depends:        async
-                      , base                            >= 4.14         && < 4.17
+                      , base
                       , bytestring
                       , cardano-api
-                      , cardano-cli
                       , cardano-crypto-class
                       , cardano-db
                       , cardano-db-sync
@@ -203,11 +167,6 @@ test-suite cardano-chain-gen
                       , esqueleto
                       , extra
                       , filepath
-                      , mtl
-                      , io-classes
-                      , optparse-applicative
-                      , ouroboros-network
-                      , plutus-ledger-api
                       , silently
                       , stm
                       , strict-stm
@@ -217,15 +176,11 @@ test-suite cardano-chain-gen
                       , text
                       , transformers
                       , transformers-except
-                      , tree-diff
                       , tasty-hunit
                       , monad-logger
                       , ouroboros-consensus
                       , ouroboros-consensus-cardano
-                      , ouroboros-consensus-protocol
-                      , ouroboros-network
                       , ouroboros-network-api
-                      , ouroboros-network-framework
                       , persistent
                       , persistent-postgresql
                       , postgresql-simple
