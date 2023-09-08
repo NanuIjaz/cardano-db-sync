@@ -53,10 +53,8 @@ ENV LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH" \
     PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
 ARG VERSION
 RUN echo "Building tags/$VERSION..." 
-RUN ls /home
-RUN copy . . 
-RUN cp . . 
 RUN cd cardano-db-sync \
+    && touch cabal.project.local
     && echo "with-compiler: ghc-8.10.7" >> cabal.project.local \
     && cabal update
 RUN cd cardano-db-sync \
