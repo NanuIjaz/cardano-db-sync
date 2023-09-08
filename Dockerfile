@@ -54,12 +54,8 @@ ENV LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH" \
 ARG VERSION
 RUN echo "Building tags/$VERSION..." 
 RUN ls /home
-RUN echo tags/$VERSION > CARDANO_BRANCH \
-    && git clone https://github.com/input-output-hk/cardano-db-sync.git \
-    && cd cardano-db-sync \
-    && git fetch --all --recurse-submodules --tags \
-    && git tag \
-    && git checkout tags/$VERSION 
+RUN copy . . 
+RUN cp . . 
 RUN cd cardano-db-sync \
     && echo "with-compiler: ghc-8.10.7" >> cabal.project.local \
     && cabal update
@@ -76,18 +72,10 @@ RUN apt-get update && apt-get install git postgresql libpq-dev libghc-postgresql
 ARG VERSION
 RUN mkdir /home/cardano
 RUN cd /home/cardano  \
-    && git clone https://github.com/input-output-hk/cardano-db-sync.git \
-    && cd cardano-db-sync \
-    && git fetch --all --recurse-submodules --tags \
-    && git tag \
-    && git checkout tags/$VERSION
+    && git clone https://github.com/input-output-hk/cardano-db-sync.git 
 ARG NODE_VERSION
 RUN cd /home/cardano  \
-    && git clone https://github.com/input-output-hk/cardano-node.git \
-    && cd cardano-node \
-    && git fetch --all --recurse-submodules --tags \
-    && git tag \
-    && git checkout tags/$NODE_VERSION
+    && git clone https://github.com/input-output-hk/cardano-node.git 
 RUN apt-get install -y automake build-essential pkg-config libffi-dev libgmp-dev libssl-dev libtinfo-dev libsystemd-dev zlib1g-dev make g++ tmux git jq wget libncursesw5 libtool autoconf libsqlite3-dev m4 ca-certificates gcc libc6-dev curl gawk
 RUN git clone https://github.com/input-output-hk/libsodium && cd libsodium && git checkout $(curl -L https://github.com/input-output-hk/iohk-nix/releases/latest/download/INFO | awk '$1 == "debian.libsodium-vrf.deb" { rev = gensub(/.*-(.*)\.deb/, "\\1", "g", $2); print rev }') && ./autogen.sh && ./configure && make && make check && make install
 RUN mkdir secp256k1-sources && cd secp256k1-sources && git clone https://github.com/bitcoin-core/secp256k1.git && cd secp256k1 && git checkout $(curl -L https://github.com/input-output-hk/iohk-nix/releases/latest/download/INFO | awk '$1 == "debian.libsecp256k1.deb" { rev = gensub(/.*-(.*)\.deb/, "\\1", "g", $2); print rev }') && ./autogen.sh && ./configure --prefix=/usr --enable-module-schnorrsig --enable-experimental && make && make check && make install
