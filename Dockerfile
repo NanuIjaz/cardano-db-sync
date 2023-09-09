@@ -44,6 +44,7 @@ RUN wget https://downloads.haskell.org/ghc/8.10.7/ghc-8.10.7-x86_64-deb9-linux.t
     && rm -rf /ghc-8.10.7
 RUN groupadd -g 1001 cardano
 RUN useradd -rm -d /home/cardano -s /bin/bash -g 1001 -G sudo -u 1001 cardano
+RUN mkdir /home/cardano
 RUN mkdir /home/cardano/cdbsync
 RUN mkdir /home/cardano/ipc
 RUN mkdir /home/cardano/cardano-db-sync
@@ -70,7 +71,6 @@ COPY --from=build /root/.local/bin/ /bin/
 COPY --from=build /usr/local/lib/ /lib/
 RUN apt-get update && apt-get install git postgresql libpq-dev libghc-postgresql-libpq-dev -y
 ARG VERSION
-RUN mkdir /home/cardano
 RUN cd /home/cardano  \
     && git clone https://github.com/input-output-hk/cardano-db-sync.git 
 ARG NODE_VERSION
