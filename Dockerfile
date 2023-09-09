@@ -57,7 +57,7 @@ RUN cd /home/cardano/cardano-db-sync \
     && touch cabal.project.local \
     && echo "with-compiler: ghc-8.10.7" >> cabal.project.local \
     && cabal update
-RUN cd cardano-db-sync \
+RUN cd /home/cardano/cardano-db-sync \
     && cabal build all \
     && cp -p dist-newstyle/build/x86_64-linux/ghc-8.10.7/cardano-db-sync-*/build/cardano-db-sync/cardano-db-sync /root/.local/bin/
 FROM debian:stable-slim
