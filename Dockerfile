@@ -44,7 +44,6 @@ RUN wget https://downloads.haskell.org/ghc/8.10.7/ghc-8.10.7-x86_64-deb9-linux.t
     && rm -rf /ghc-8.10.7
 RUN groupadd -g 1001 cardano
 RUN useradd -rm -d /home/cardano -s /bin/bash -g 1001 -G sudo -u 1001 cardano
-RUN mkdir /home/cardano
 RUN mkdir /home/cardano/cdbsync
 RUN mkdir /home/cardano/ipc
 RUN mkdir /home/cardano/cardano-db-sync
