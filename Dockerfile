@@ -69,10 +69,9 @@ RUN ldconfig
 COPY --from=build /root/.local/bin/ /bin/
 COPY --from=build /usr/local/lib/ /lib/
 RUN apt-get update && apt-get install git postgresql libpq-dev libghc-postgresql-libpq-dev -y
-ARG VERSION
+RUN mkdir /home/cardano
 RUN cd /home/cardano  \
     && git clone https://github.com/input-output-hk/cardano-db-sync.git 
-ARG NODE_VERSION
 RUN cd /home/cardano  \
     && git clone https://github.com/input-output-hk/cardano-node.git 
 RUN apt-get install -y automake build-essential pkg-config libffi-dev libgmp-dev libssl-dev libtinfo-dev libsystemd-dev zlib1g-dev make g++ tmux git jq wget libncursesw5 libtool autoconf libsqlite3-dev m4 ca-certificates gcc libc6-dev curl gawk
